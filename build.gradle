@@ -157,8 +157,10 @@ dependencies {
     //modCompileOnly("maven.modrinth:immersiveportals:v5.1.7-mc1.20.4")
 
     modCompileOnly("maven.modrinth:sodium-extra:mc1.20.1-0.5.9")
-    modRuntimeOnlyMsk("maven.modrinth:sodium-extra:mc1.20.1-0.5.9")
-    modRuntimeOnlyMsk("net.caffeinemc:CaffeineConfig:1.3.0+1.17")
+    // Sodium Extra is optional and only used for compile-time integration.
+    // Its 1.20.1 artifact expects CaffeineConfig from an obsolete Maven host,
+    // so loading it in the development client would create a false startup
+    // error unrelated to Voxy.
 
     modCompileOnly("maven.modrinth:Chunky:1.3.146-fabric")
     modRuntimeOnlyMsk("maven.modrinth:Chunky:1.3.146-fabric")
@@ -180,6 +182,7 @@ tasks.withType(JavaCompile).configureEach {
     it.options.encoding = "UTF-8"
     it.options.release = targetJavaVersion
     it.options.deprecation = true
+    it.options.compilerArgs.addAll(["-Xmaxerrs", "500"])
 }
 
 java {

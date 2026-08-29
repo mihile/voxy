@@ -4,6 +4,7 @@ import com.google.gson.FieldNamingPolicy;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 
+import me.cortex.voxy.client.core.NormalRenderPipeline;
 import me.cortex.voxy.client.core.SSAO;
 import me.cortex.voxy.common.Logger;
 import me.cortex.voxy.commonImpl.VoxyCommon;
@@ -33,7 +34,13 @@ public class VoxyConfig implements OptionStorage<VoxyConfig> {
     public int sectionRenderDistance = 16;
     public int serviceThreads = (int) Math.max(Runtime.getRuntime().availableProcessors() * 2 / 1.5, 1);
     public float subDivisionSize = 64;
-    public boolean renderVanillaFog = true;
+    /**
+     * Kept so existing 1.20.1-port configs can be migrated. New configs use
+     * {@link #fogMode}, matching current upstream Voxy.
+     */
+    @Deprecated
+    public Boolean renderVanillaFog;
+    public String fogMode;
     public boolean dontUseSodiumBuilderThreads = false;
 
     public String ssaoMode;
@@ -47,6 +54,24 @@ public class VoxyConfig implements OptionStorage<VoxyConfig> {
 
     public void setSSAOMode(SSAO.SSAOMode mode) {
         this.ssaoMode = mode.name().toLowerCase(Locale.ROOT);
+    }
+
+    public NormalRenderPipeline.FogMode getFogMode() {
+        if (this.fogMode == null) {
+            return Boolean.FALSE.equals(this.renderVanillaFog)
+                    ? NormalRenderPipeline.FogMode.FADE
+                    : NormalRenderPipeline.FogMode.FOG_AND_FADE;
+        }
+        try {
+            return NormalRenderPipeline.FogMode.valueOf(this.fogMode.toUpperCase(Locale.ROOT));
+        } catch (Exception ignored) {
+            return NormalRenderPipeline.FogMode.FOG_AND_FADE;
+        }
+    }
+
+    public void setFogMode(NormalRenderPipeline.FogMode mode) {
+        this.fogMode = mode.name().toLowerCase(Locale.ROOT);
+        this.renderVanillaFog = null;
     }
 
     private static VoxyConfig loadOrCreate() {

@@ -52,17 +52,40 @@ public class NormalRenderPipeline extends AbstractRenderPipeline {
     private GlTexture colourSSAOTex;
     private final GlFramebuffer fbSSAO = new GlFramebuffer();
 
-    private final boolean useEnvFog;
+    private final FogMode fogMode;
     private final FullscreenBlit finalBlit;
 
     private final SSAO ssao;
 
+    public enum FogMode {
+        FOG_AND_FADE(false, true, true),
+        FOG(false, true, false),
+        FADE(true, false, true),
+        OFF(true, false, false);
+
+        public final boolean removesVanillaEnvFog;
+        public final boolean hasFog;
+        public final boolean hasFade;
+
+        FogMode(boolean removesVanillaEnvFog, boolean hasFog, boolean hasFade) {
+            this.removesVanillaEnvFog = removesVanillaEnvFog;
+            this.hasFog = hasFog;
+            this.hasFade = hasFade;
+        }
+    }
+
     protected NormalRenderPipeline(AsyncNodeManager nodeManager, NodeCleaner nodeCleaner, HierarchicalOcclusionTraverser traversal, BooleanSupplier frexSupplier) {
-        super(nodeManager, nodeCleaner, traversal, frexSupplier, false);
-        this.useEnvFog = VoxyConfig.CONFIG.renderVanillaFog;
-        this.finalBlit = new FullscreenBlit("voxy:post/blit_texture_depth_cutout.frag",
-                a->a.defineIf("USE_ENV_FOG", this.useEnvFog).define("EMIT_COLOUR"));
-        this.ssao = SSAO.createSSAO(VoxyConfig.CONFIG.getSSAOMode());
+        this(RenderProperties.LEGACY, nodeManager, nodeCleaner, traversal, frexSupplier);
+    }
+
+    protected NormalRenderPipeline(RenderProperties properties, AsyncNodeManager nodeManager, NodeCleaner nodeCleaner, HierarchicalOcclusionTraverser traversal, BooleanSupplier frexSupplier) {
+        super(properties, nodeManager, nodeCleaner, traversal, frexSupplier, false);
+        this.fogMode = VoxyConfig.CONFIG.getFogMode();
+        this.finalBlit = new FullscreenBlit(properties, "voxy:post/blit_texture_depth_cutout.frag",
+                a -> a.defineIf("HAS_FOG", this.fogMode.hasFog)
+                        .defineIf("HAS_FADE", this.fogMode.hasFade)
+                        .define("EMIT_COLOUR"));
+        this.ssao = SSAO.createSSAO(properties, VoxyConfig.CONFIG.getSSAOMode());
     }
 
     @Override
@@ -112,7 +135,7 @@ public class NormalRenderPipeline extends AbstractRenderPipeline {
 
         boolean fogCoversAllRendering = fogEnd < renderDistance;
 
-        if (this.useEnvFog) {
+        if (this.fogMode.hasFog) {
             if (Math.abs(fogEnd - fogStart) > 1) {
                 float invEndFogDelta = 1f / (fogEnd - fogStart);
                 float endDistance = Math.max(renderDistance, 20 * 16); //TODO: make this constant a config option
@@ -125,6 +148,16 @@ public class NormalRenderPipeline extends AbstractRenderPipeline {
                 glUniform4f(4, 0, 0, 0, 0);
                 glUniform4f(5, 0, 0, 0, 0);
             }
+        }
+        if (this.fogMode.hasFade) {
+            int mode = 1; // XZ distance fade, matching current upstream.
+            float rd = VoxyConfig.CONFIG.sectionRenderDistance * 16 * 32
+                    - (float) Math.sqrt(mode > 1 ? 32 * 32 * 32 : 32 * 32);
+            float vanillaRd = VoxyRenderSystem.getRenderDistance();
+            float start = Math.max(vanillaRd, rd * 0.9f);
+            float end = Math.max(vanillaRd, rd);
+            float scale = 1.0f / Math.max(end - start, 0.001f);
+            glUniform4f(6, mode, -start * scale, scale, 0);
         }
 
         glBindTextureUnit(3, this.colourSSAOTex.id);

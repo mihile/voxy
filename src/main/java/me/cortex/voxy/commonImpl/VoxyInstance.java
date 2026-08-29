@@ -32,6 +32,9 @@ public abstract class VoxyInstance {
     protected final ImportManager importManager;
 
     public VoxyInstance() {
+        if (!this.shouldCreateInstance()) {
+            throw new DontCreateInstance();
+        }
         Logger.info("Initializing voxy instance");
         this.threadPool = new UnifiedServiceThreadPool();
         this.savingService = new SectionSavingService(this.getServiceManager());
@@ -55,6 +58,10 @@ public abstract class VoxyInstance {
         this.worldCleaner.setName("Active world cleaner");
         this.worldCleaner.setDaemon(true);
         this.worldCleaner.start();
+    }
+
+    protected boolean shouldCreateInstance() {
+        return true;
     }
 
     protected void setNumThreads(int threads) {
@@ -240,12 +247,14 @@ public abstract class VoxyInstance {
 
         if (!this.activeWorlds.isEmpty()) {
             boolean printedNotice = false;
-            for (var world : this.activeWorlds.values()) {
+            for (var world : new ArrayList<>(this.activeWorlds.values())) {
                 if (world.isWorldUsed()) {
                     if (!printedNotice) {
                         printedNotice = true;
                         Logger.error("Not all worlds shutdown, force closing worlds");
                     }
+                    //Dont lock in the loopy thing, this should basicly never happen if it does something horrific happened
+                    this.activeWorldLock.unlockWrite(stamp);
                     while (world.isWorldUsed()) {
                         try {
                             //noinspection BusyWait
@@ -254,6 +263,7 @@ public abstract class VoxyInstance {
                             throw new RuntimeException(e);
                         }
                     }
+                    stamp = this.activeWorldLock.writeLock();
                 }
                 //Free the world
                 world.free();

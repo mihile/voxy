@@ -36,12 +36,13 @@ public class MixinFogRenderer {
 
         if (RenderSystem.getShaderFogEnd() < 10.0f) return;
 
+        var mode = VoxyConfig.CONFIG.getFogMode();
         if (camera.getFluidInCamera() != FogType.NONE) {
-            if (!VoxyConfig.CONFIG.renderVanillaFog) {
+            if (mode.removesVanillaEnvFog) {
                 RenderSystem.setShaderFogStart(999999999);
                 RenderSystem.setShaderFogEnd(999999999);
             }
-        } else {
+        } else if (mode.removesVanillaEnvFog) {
             RenderSystem.setShaderFogStart(999999999);
             RenderSystem.setShaderFogEnd(999999999);
         }

@@ -1,9 +1,9 @@
 package me.cortex.voxy.common.world;
 
 import it.unimi.dsi.fastutil.longs.Long2ShortOpenHashMap;
-import me.cortex.voxy.client.core.util.ExpansionUtil;
 import me.cortex.voxy.common.Logger;
 import me.cortex.voxy.common.util.MemoryBuffer;
+import me.cortex.voxy.common.util.BitUtil;
 import me.cortex.voxy.common.util.ThreadLocalMemoryBuffer;
 import me.cortex.voxy.common.world.other.Mapper;
 import org.lwjgl.system.MemoryUtil;
@@ -21,15 +21,15 @@ public class SaveLoadSystem3 {
         int x = i&0x1F;
         int y = (i>>10)&0x1F;
         int z = (i>>5)&0x1F;
-        return ExpansionUtil.expand(x,0b1001001001001)| ExpansionUtil.expand(y,0b10010010010010)| ExpansionUtil.expand(z,0b100100100100100);
+        return BitUtil.expand(x,0b1001001001001)|BitUtil.expand(y,0b10010010010010)|BitUtil.expand(z,0b100100100100100);
 
         //zyxzyxzyxzyxzyx
     }
 
     public static int z2lin(int i) {
-        int x = ExpansionUtil.compress(i, 0b1001001001001);
-        int y = ExpansionUtil.compress(i, 0b10010010010010);
-        int z = ExpansionUtil.compress(i, 0b100100100100100);
+        int x = BitUtil.compress(i, 0b1001001001001);
+        int y = BitUtil.compress(i, 0b10010010010010);
+        int z = BitUtil.compress(i, 0b100100100100100);
         return x|(y<<10)|(z<<5);
     }
 
@@ -98,11 +98,11 @@ public class SaveLoadSystem3 {
         }
 
         if (section.lvl == 0) {
-            int emptyBlockCount = 0;
+            int notEmpty = 0;
             for (long block : blockData) {
-                emptyBlockCount += Mapper.isAir(block) ? 1 : 0;
+                notEmpty += Mapper.isNotAirInt(block);
             }
-            section.nonEmptyBlockCount = WorldSection.SECTION_VOLUME-emptyBlockCount;
+            section.nonEmptyBlockCount = notEmpty;
         }
 
         ptr = lutBasePtr + (metadata & 0xFFFF) * 8L;

@@ -73,4 +73,8 @@ public abstract class ModelQueries {
     public static long _isFullyOpaque(long metadata) {
         return ((metadata>>(8*6+6))&1);
     }
+
+    public static long lightEmission(long metadata) {
+        return (metadata>>(8*6+7))&0xFL;
+    }
 }

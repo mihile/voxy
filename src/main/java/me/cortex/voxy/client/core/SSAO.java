@@ -6,24 +6,18 @@ import me.cortex.voxy.client.core.gl.shader.Shader;
 import me.cortex.voxy.client.core.gl.shader.ShaderType;
 import me.cortex.voxy.client.core.rendering.Viewport;
 import org.joml.Matrix4f;
-import org.joml.Random;
 import org.lwjgl.system.MemoryStack;
 
 import java.util.List;
 
 import static org.lwjgl.opengl.ARBComputeShader.glDispatchCompute;
-import static org.lwjgl.opengl.ARBDirectStateAccess.glTextureParameteri;
 import static org.lwjgl.opengl.ARBShaderImageLoadStore.glBindImageTexture;
 import static org.lwjgl.opengl.GL11C.*;
-import static org.lwjgl.opengl.GL11C.GL_TEXTURE_WRAP_T;
 import static org.lwjgl.opengl.GL12C.GL_CLAMP_TO_EDGE;
 import static org.lwjgl.opengl.GL14C.GL_TEXTURE_COMPARE_MODE;
 import static org.lwjgl.opengl.GL15C.GL_READ_WRITE;
 import static org.lwjgl.opengl.GL20C.nglUniformMatrix4fv;
-import static org.lwjgl.opengl.GL30.GL_DEPTH_ATTACHMENT;
-import static org.lwjgl.opengl.GL30.GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME;
 import static org.lwjgl.opengl.GL33C.*;
-import static org.lwjgl.opengl.GL45.glGetNamedFramebufferAttachmentParameteri;
 import static org.lwjgl.opengl.GL45C.glBindTextureUnit;
 import static org.lwjgl.opengl.GL45C.glCreateSamplers;
 
@@ -35,20 +29,28 @@ public class SSAO {
         BEST
     }
 
-    public static SSAO createSSAO(SSAOMode mode) {
+    public static SSAO createSSAO(RenderProperties properties, SSAOMode mode) {
         if (mode == SSAOMode.BASIC) {
-            return new SSAO();
+            return new SSAO(properties);
         } else if (mode == SSAOMode.BETTER) {
-            return new SSAO(true, 12);
+            return new SSAO(properties, true, 12);
         } else if (mode == SSAOMode.BEST) {
-            return new SSAO(true, 24);
+            return new SSAO(properties, true, 24);
         } else if (mode == SSAOMode.AUTO) {
-            if ((!Capabilities.INSTANCE.canQueryGpuMemory) || Capabilities.INSTANCE.totalDedicatedMemory<2_500_000_000L) {
-                return createSSAO(SSAOMode.BASIC);//Create a basic instance (cant query memory (probably intel igpu or less then 2.5gb vram)
-            } else if (Capabilities.INSTANCE.totalDedicatedMemory<7_000_000_000L) {
-                return createSSAO(SSAOMode.BETTER);//Less then 7gb of dedicated vram create a better instance (mid range dgpus (they can probably do best just fine but just in case)
+            if (Capabilities.INSTANCE.canQueryGpuMemory) {
+                if (Capabilities.INSTANCE.totalDedicatedMemory < 2_500_000_000L) {
+                    return createSSAO(properties, SSAOMode.BASIC);//Create a basic instance (cant query memory (probably intel igpu or less then 2.5gb vram)
+                } else if (Capabilities.INSTANCE.totalDedicatedMemory < 7_000_000_000L) {
+                    return createSSAO(properties, SSAOMode.BETTER);//Less then 7gb of dedicated vram create a better instance (mid range dgpus (they can probably do best just fine but just in case)
+                } else {
+                    return createSSAO(properties, SSAOMode.BEST);//create the best ssao
+                }
             } else {
-                return createSSAO(SSAOMode.BEST);//create the best ssao
+                if (Capabilities.INSTANCE.isAmd) {
+                    return createSSAO(properties, SSAOMode.BETTER);
+                } else {
+                    return createSSAO(properties, SSAOMode.BASIC);
+                }
             }
         } else {
             throw new IllegalArgumentException();
@@ -60,12 +62,13 @@ public class SSAO {
     private final int spp;
 
     private final int depthSampler;
-    public SSAO() {
-        this(false, 0);
+    public SSAO(RenderProperties properties) {
+        this(properties, false, 0);
     }
 
-    public SSAO(boolean betterSSAO, int samples) {
+    public SSAO(RenderProperties properties, boolean betterSSAO, int samples) {
         var builder = Shader.make()
+                .apply(properties::apply)
                 .add(ShaderType.COMPUTE, "voxy:post/ssao.comp");
 
         this.spp = samples;
@@ -117,7 +120,7 @@ public class SSAO {
 
     }
 
-    public void computeSSAO(Viewport<?> viewport, GlTexture colourOut, GlTexture colourIn, GlTexture baseDepthTex, int sourceFramebuffer) {
+    public void computeSSAO(Viewport<?> viewport, GlTexture colourOut, GlTexture colourIn, GlTexture baseDepthTex, int sourceDepthTexture) {
         this.ssaoCompute.bind();
         //The matrices
         try (var stack = MemoryStack.stackPush()) {
@@ -147,8 +150,7 @@ public class SSAO {
         glBindSampler(2, this.depthSampler);
 
         if (this.isBetterSSAO) {
-            int depthTexture = glGetNamedFramebufferAttachmentParameteri(sourceFramebuffer, GL_DEPTH_ATTACHMENT, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME);
-            glBindTextureUnit(3, depthTexture);
+            glBindTextureUnit(3, sourceDepthTexture);
             glBindSampler(3, this.depthSampler);
         }
 

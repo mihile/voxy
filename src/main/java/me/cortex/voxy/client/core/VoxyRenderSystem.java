@@ -10,10 +10,12 @@ import me.cortex.voxy.client.core.gl.GlBuffer;
 import me.cortex.voxy.client.core.gl.GlTexture;
 import me.cortex.voxy.client.core.model.ModelBakerySubsystem;
 import me.cortex.voxy.client.core.model.ModelStore;
-import me.cortex.voxy.client.core.rendering.ChunkBoundRenderer;
 import me.cortex.voxy.client.core.rendering.RenderDistanceTracker;
 import me.cortex.voxy.client.core.rendering.Viewport;
 import me.cortex.voxy.client.core.rendering.ViewportSelector;
+import me.cortex.voxy.client.core.rendering.bounding.BoundRenderer;
+import me.cortex.voxy.client.core.rendering.bounding.ColumnStreamedBoundStore;
+import me.cortex.voxy.client.core.rendering.bounding.StreamedBoundStore;
 import me.cortex.voxy.client.core.rendering.building.RenderGenerationService;
 import me.cortex.voxy.client.core.rendering.hierachical.AsyncNodeManager;
 import me.cortex.voxy.client.core.rendering.hierachical.HierarchicalOcclusionTraverser;
@@ -68,7 +70,9 @@ public class VoxyRenderSystem {
 
 
     private final RenderDistanceTracker renderDistanceTracker;
-    public final ChunkBoundRenderer chunkBoundRenderer;
+    private final BoundRenderer boundOutlineRenderer;
+    public final StreamedBoundStore visibleSectionStream;
+    private ColumnStreamedBoundStore columnStreamedBoundStore;
 
     private final ViewportSelector<?> viewportSelector;
 
@@ -105,6 +109,7 @@ public class VoxyRenderSystem {
             glFinish();
 
             this.worldIn = world;
+            this.visibleSectionStream = new StreamedBoundStore();
 
             var backendFactory = getRenderBackendFactory();
 
@@ -126,7 +131,7 @@ public class VoxyRenderSystem {
                 this.nodeManager.start();
             }
 
-            this.pipeline = RenderPipelineFactory.createPipeline(this.nodeManager, this.nodeCleaner, this.traversal, this::frexStillHasWork);
+            this.pipeline = RenderPipelineFactory.createPipeline(RenderProperties.getRenderProperties(), this.nodeManager, this.nodeCleaner, this.traversal, this::frexStillHasWork);
             this.pipeline.setupExtraModelBakeryData(this.modelService);//Configure the model service
 
             //Late stage traversal compile for shaders with taa
@@ -156,7 +161,7 @@ public class VoxyRenderSystem {
                 this.setRenderDistance(VoxyConfig.CONFIG.sectionRenderDistance);
             }
 
-            this.chunkBoundRenderer = new ChunkBoundRenderer(this.pipeline);
+            this.boundOutlineRenderer = new BoundRenderer(this.pipeline);
 
             Logger.info("Voxy render system created with " + this.geometryData.getMaxCapacity() + " geometry capacity, using pipeline '" + this.pipeline.getClass().getSimpleName() + "' with renderer '" + sectionRenderer.getClass().getSimpleName() + "'");
         } catch (RuntimeException e) {
@@ -261,10 +266,19 @@ public class VoxyRenderSystem {
         this.pipeline.preSetup(viewport);
 
         TimingStatistics.E.start();
-        if ((!VoxyClient.disableSodiumChunkRender())&&!IrisUtil.irisShadowActive()) {
-            this.chunkBoundRenderer.render(viewport);
+        if (!VoxyClient.disableSodiumChunkRender() && !IrisUtil.irisShadowActive()) {
+            if (VoxyClient.isFrexActive() != (this.columnStreamedBoundStore != null)) {
+                if (this.columnStreamedBoundStore == null) {
+                    this.columnStreamedBoundStore = new ColumnStreamedBoundStore();
+                } else {
+                    this.columnStreamedBoundStore.free();
+                    this.columnStreamedBoundStore = null;
+                }
+            }
+            this.boundOutlineRenderer.render(viewport,
+                    this.columnStreamedBoundStore == null ? this.visibleSectionStream : this.columnStreamedBoundStore);
         } else {
-            viewport.depthBoundingBuffer.clear(0);
+            viewport.depthBoundingBuffer.clear(this.pipeline.properties.inverseClearDepth());
         }
         TimingStatistics.E.stop();
 
@@ -492,7 +506,12 @@ public class VoxyRenderSystem {
                 RenderResourceReuse.giveBackGeometryBuffer(((BasicSectionGeometryData)this.geometryData).getGeometryBuffer());
             }
 
-            this.chunkBoundRenderer.free();
+            this.boundOutlineRenderer.free();
+            this.visibleSectionStream.free();
+            if (this.columnStreamedBoundStore != null) {
+                this.columnStreamedBoundStore.free();
+                this.columnStreamedBoundStore = null;
+            }
 
             this.viewportSelector.free();
         } catch (Exception e) {Logger.error("Error shutting down renderer components", e);}

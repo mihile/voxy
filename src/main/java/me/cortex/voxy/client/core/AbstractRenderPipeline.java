@@ -53,7 +53,9 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
 
     protected AbstractSectionRenderer<?,?> sectionRenderer;
 
-    private final FullscreenBlit depthStencilSetup = new FullscreenBlit("voxy:post/fullscreen2.vert", "voxy:post/setup_stencil_depth.frag");
+    private final FullscreenBlit depthStencilSetup;
+
+    public final RenderProperties properties;
 
     public final DepthFramebuffer fb = new DepthFramebuffer(GL_DEPTH24_STENCIL8);
 
@@ -66,6 +68,12 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
     }
 
     protected AbstractRenderPipeline(AsyncNodeManager nodeManager, NodeCleaner nodeCleaner, HierarchicalOcclusionTraverser traversal, BooleanSupplier frexSupplier, boolean deferTranslucency) {
+        this(RenderProperties.LEGACY, nodeManager, nodeCleaner, traversal, frexSupplier, deferTranslucency);
+    }
+
+    protected AbstractRenderPipeline(RenderProperties properties, AsyncNodeManager nodeManager, NodeCleaner nodeCleaner, HierarchicalOcclusionTraverser traversal, BooleanSupplier frexSupplier, boolean deferTranslucency) {
+        this.properties = properties;
+        this.depthStencilSetup = new FullscreenBlit(properties, "voxy:post/fullscreen2.vert", "voxy:post/setup_stencil_depth.frag");
         this.frexStillHasWork = frexSupplier;
         this.nodeManager = nodeManager;
         this.nodeCleaner = nodeCleaner;

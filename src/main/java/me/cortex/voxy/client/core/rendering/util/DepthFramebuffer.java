@@ -4,10 +4,8 @@ import me.cortex.voxy.client.core.gl.GlFramebuffer;
 import me.cortex.voxy.client.core.gl.GlTexture;
 import org.lwjgl.system.MemoryStack;
 
-import static org.lwjgl.opengl.ARBDirectStateAccess.*;
-import static org.lwjgl.opengl.GL11.GL_NEAREST;
-import static org.lwjgl.opengl.GL11.GL_TEXTURE_MAG_FILTER;
-import static org.lwjgl.opengl.GL11.GL_TEXTURE_MIN_FILTER;
+import static org.lwjgl.opengl.ARBDirectStateAccess.nglClearNamedFramebufferfv;
+import static org.lwjgl.opengl.ARBDirectStateAccess.nglClearNamedFramebufferiv;
 import static org.lwjgl.opengl.GL11C.GL_DEPTH;
 import static org.lwjgl.opengl.GL14.GL_DEPTH_COMPONENT24;
 import static org.lwjgl.opengl.GL30C.*;
@@ -41,10 +39,6 @@ public class DepthFramebuffer {
 
     public int getDepthAttachmentType() {
         return this.depthType == GL_DEPTH24_STENCIL8?GL_DEPTH_STENCIL_ATTACHMENT: GL_DEPTH_ATTACHMENT;
-    }
-
-    public void clear() {
-        this.clear(1.0f);
     }
 
     public void clear(float depth) {

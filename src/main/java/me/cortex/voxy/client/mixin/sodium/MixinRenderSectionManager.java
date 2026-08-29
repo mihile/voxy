@@ -43,9 +43,7 @@ public class MixinRenderSectionManager {
     private void voxy$resetChunkTracker(ClientLevel level, int renderDistance, CommandList commandList, CallbackInfo ci) {
         if (level.levelRenderer != null) {
             var system = ((IGetVoxyRenderSystem)(level.levelRenderer)).voxy$getRenderSystem();
-            if (system != null) {
-                system.chunkBoundRenderer.reset();
-            }
+            if (system != null) system.visibleSectionStream.reset();
         }
         this.bottomSectionY = this.world.getMinBuildHeight()>>4;
     }
@@ -142,14 +140,7 @@ public class MixinRenderSectionManager {
             x-=sector<<10;
             y+=16+(256-32-sector*30);
         }
-        long pos = SectionPos.asLong(x,y,z);
-        if (wasBuilt) {//Remove
-            //TODO: on chunk remove do ingest if is surrounded by built chunks (or when the tracker says is ok)
-
-            system.chunkBoundRenderer.removeSection(pos);
-        } else {//Add — chunk newly built for the first time
-            system.chunkBoundRenderer.addSection(pos);
-
+        if (!wasBuilt) {//Add — chunk newly built for the first time
             // FIX: ingest newly explored chunks here, where Sodium has already compiled
             // the geometry and lighting is guaranteed to be available. The onChunkAdded
             // hook fires too early (before lighting arrives for freshly generated chunks).

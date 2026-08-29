@@ -43,6 +43,9 @@ import java.util.function.Consumer;
 //There are independent mappings for biome and block states, these get combined in the shader and allow for more
 // variaty of things
 public class Mapper {
+    public static int isNotAirInt(long id) {
+        return Math.min(getBlockId(id), 1);
+    }
     private static final int BLOCK_STATE_TYPE = 1;
     private static final int BIOME_TYPE = 2;
 

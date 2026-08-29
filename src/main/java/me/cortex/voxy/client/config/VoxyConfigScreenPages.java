@@ -3,6 +3,7 @@ package me.cortex.voxy.client.config;
 import com.google.common.collect.ImmutableList;
 import me.cortex.voxy.client.ClientSessionEvents;
 import me.cortex.voxy.client.core.IGetVoxyRenderSystem;
+import me.cortex.voxy.client.core.NormalRenderPipeline;
 import me.cortex.voxy.client.core.SSAO;
 import me.cortex.voxy.client.core.util.IrisUtil;
 import me.cortex.voxy.client.mixin.sodium.AccessorSodiumWorldRenderer;
@@ -24,6 +25,12 @@ public abstract class VoxyConfigScreenPages {
             Component.translatable("voxy.config.general.ssao_mode.basic"),
             Component.translatable("voxy.config.general.ssao_mode.better"),
             Component.translatable("voxy.config.general.ssao_mode.best")
+    };
+    private static final Component[] FOG_MODE_LABELS = {
+            Component.translatable("voxy.config.general.environmental_fog.fog_and_fade"),
+            Component.translatable("voxy.config.general.environmental_fog.fog"),
+            Component.translatable("voxy.config.general.environmental_fog.fade"),
+            Component.translatable("voxy.config.general.environmental_fog.off")
     };
 
     private VoxyConfigScreenPages(){}
@@ -153,11 +160,11 @@ public abstract class VoxyConfigScreenPages {
         );
 
         groups.add(OptionGroup.createBuilder()
-                .add(OptionImpl.createBuilder(boolean.class, storage)
-                        .setName(Component.translatable("voxy.config.general.render_fog"))
-                        .setTooltip(Component.translatable("voxy.config.general.render_fog.tooltip"))
-                        .setControl(TickBoxControl::new)
-                        .setBinding((s, v)-> s.renderVanillaFog = v, s -> s.renderVanillaFog)
+                .add(OptionImpl.createBuilder(NormalRenderPipeline.FogMode.class, storage)
+                        .setName(Component.translatable("voxy.config.general.environmental_fog"))
+                        .setTooltip(Component.translatable("voxy.config.general.environmental_fog.tooltip"))
+                        .setControl(opt -> new CyclingControl<>(opt, NormalRenderPipeline.FogMode.class, FOG_MODE_LABELS))
+                        .setBinding(VoxyConfig::setFogMode, VoxyConfig::getFogMode)
                         .setFlags(OptionFlag.REQUIRES_RENDERER_RELOAD)
                         .build()
                 ).add(OptionImpl.createBuilder(SSAO.SSAOMode.class, storage)
