@@ -1,5 +1,7 @@
 package me.cortex.voxy.client.mixin.sodium;
 
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+import it.unimi.dsi.fastutil.longs.LongSet;
 import me.cortex.voxy.client.ICheekyClientChunkCache;
 import me.cortex.voxy.client.config.VoxyConfig;
 import me.cortex.voxy.client.core.IGetVoxyRenderSystem;
@@ -39,6 +41,14 @@ public class MixinRenderSectionManager {
 
     @Shadow @Final private ChunkBuilder builder;
 
+    /**
+     * Chunks which were already ingested successfully by {@code onChunkAdded}.
+     * Sodium subsequently uploads each non-empty section in the same chunk; without
+     * this guard those uploads enqueue the same voxelization work a second time.
+     */
+    @Unique
+    private final LongSet voxy$fullyIngestedChunks = new LongOpenHashSet();
+
     @Inject(method = "<init>", at = @At("TAIL"))
     private void voxy$resetChunkTracker(ClientLevel level, int renderDistance, CommandList commandList, CallbackInfo ci) {
         if (level.levelRenderer != null) {
@@ -50,6 +60,7 @@ public class MixinRenderSectionManager {
 
     @Inject(method = "onChunkRemoved", at = @At("HEAD"))
     private void voxy$injectIngest(int x, int z, CallbackInfo ci) {
+        this.voxy$fullyIngestedChunks.remove(ChunkPos.asLong(x, z));
         //TODO: Am not quite sure if this is right
         if (VoxyConfig.CONFIG.ingestEnabled && !BOBBY_INSTALLED) {
             var cccm = (ICheekyClientChunkCache)this.world.getChunkSource();
@@ -70,7 +81,14 @@ public class MixinRenderSectionManager {
             if (cccm != null) {
                 var chunk = cccm.getChunk(x, z, ChunkStatus.FULL, false);
                 if (chunk != null) {
-                    VoxelIngestService.tryAutoIngestChunk(chunk);
+                    long chunkPos = ChunkPos.asLong(x, z);
+                    if (VoxelIngestService.tryAutoIngestChunk(chunk)) {
+                        this.voxy$fullyIngestedChunks.add(chunkPos);
+                    } else {
+                        // Lighting is commonly unavailable at this point. Keep the
+                        // per-section upload fallback enabled for this chunk.
+                        this.voxy$fullyIngestedChunks.remove(chunkPos);
+                    }
                 }
             }
         }
@@ -134,6 +152,8 @@ public class MixinRenderSectionManager {
         }
         
 
+        boolean alreadyFullyIngested = this.voxy$fullyIngestedChunks.contains(ChunkPos.asLong(x, z));
+
         //Do some very cheeky stuff for MiB
         if (VoxyCommon.IS_MINE_IN_ABYSS) {
             int sector = (x+512)>>10;
@@ -144,7 +164,7 @@ public class MixinRenderSectionManager {
             // FIX: ingest newly explored chunks here, where Sodium has already compiled
             // the geometry and lighting is guaranteed to be available. The onChunkAdded
             // hook fires too early (before lighting arrives for freshly generated chunks).
-            if (VoxyConfig.CONFIG.ingestEnabled) {
+            if (VoxyConfig.CONFIG.ingestEnabled && !alreadyFullyIngested) {
                 var tracker = ((AccessorChunkTracker)ChunkTrackerHolder.get(this.world)).getChunkStatus();
                 long key = ChunkPos.asLong(x, z);
                 if (key != this.cachedChunkPos) {
