@@ -195,7 +195,11 @@ public class VoxyRenderSystem {
         }
 
         //cameraY += 100;
-        var voxyProjection = computeProjectionMat(matrices.projection());
+        float farPlaneChunks = 3000;
+        if (this.pipeline instanceof IrisVoxyRenderPipeline irisPipeline && irisPipeline.useDynamicFarPlane()) {
+            farPlaneChunks = (VoxyConfig.CONFIG.sectionRenderDistance * 32 + 2) * (float) Math.sqrt(3);
+        }
+        var voxyProjection = computeProjectionMat(matrices.projection(), farPlaneChunks * 16);
 
         int[] dims = new int[4];
         glGetIntegerv(GL_VIEWPORT, dims);
@@ -426,14 +430,14 @@ public class VoxyRenderSystem {
         ).mulLocal(makeProjectionMatrix(nearVoxy, 16*3000));
     }*/
 
-    private static Matrix4f computeProjectionMat(Matrix4fc base) {
+    private static Matrix4f computeProjectionMat(Matrix4fc base, float farPlane) {
 
         var proj = new Matrix4f(base);
 
         float near = getRenderDistance()<=32.0f?8f:16f;
         near = VoxyClient.disableSodiumChunkRender()?0.1f:near;
 
-        float far = 16*3000;
+        float far = farPlane;
 
         return proj
                 .m22((far + near) / (near - far))
