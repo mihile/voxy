@@ -121,6 +121,9 @@ if (!isInGHA) {
 
 dependencies {
     // To change the versions see the gradle.properties file
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.ow2.asm:asm-tree:9.7.1'
+
     minecraft "com.mojang:minecraft:${project.minecraft_version}"
     mappings loom.officialMojangMappings()
     modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"

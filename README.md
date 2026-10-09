@@ -24,6 +24,9 @@ Minecraft 1.20.1 port.
   uploads.
 - Keeps the original texture animations and their interpolation fully enabled.
 - Prevents the same Sodium chunk from being queued for Voxy ingestion twice.
+- Starts the client session after vanilla's login thread check and game mode
+  initialization, preventing premature Netty-thread instances from choosing
+  the `.voxy/saves/UNKNOWN` cache directory.
 
 Minecraft normally uploads animated atlas frames directly from CPU memory.
 When the GPU is still reading that atlas, `glTexSubImage2D` can block the render
@@ -52,6 +55,20 @@ It skips selected draw work during the Iris shadow pass, such as sign text, map
 contents, banner patterns, and enchantment glint. The available profiling
 evidence therefore points to a GPU/driver synchronization issue exposed by the
 altered shadow-pass workload and timing, rather than a direct conflicting mixin.
+
+## Login initialization fix (port.8)
+
+The client session now starts immediately after vanilla assigns `gameMode` in
+`ClientPacketListener.handleLogin`. Vanilla's thread check has already dispatched
+the packet to the client thread at that point, and the connection is available
+for cache path selection. Starting before `setLevel` also lets the initial world
+renderer find the Voxy instance.
+
+This fixes premature Netty-thread initialization and the resulting
+`.voxy/saves/UNKNOWN` cache selection, including the combination reported with
+VoxyServer 1.2.4 for Minecraft 1.20.1. Existing files under `UNKNOWN` are left in
+place. The change is covered by bytecode regression checks against Minecraft
+1.20.1; multiplayer and single-player gameplay validation is performed separately.
 
 ## Build
 
