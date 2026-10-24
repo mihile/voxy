@@ -6,6 +6,8 @@ import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 
 import me.cortex.voxy.client.core.model.ModelFactory;
+import me.cortex.voxy.client.core.RenderResourceReuse;
+import me.cortex.voxy.common.Logger;
 import me.cortex.voxy.common.util.UnsafeUtil;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.ItemBlockRenderTypes;
@@ -56,6 +58,12 @@ public class SoftwareModelTextureBakery {
     private final ReuseVertexConsumer opaqueVC = new ReuseVertexConsumer();
     private final ReuseVertexConsumer translucentVC = new ReuseVertexConsumer(1/* has discard */);
     private final SoftwareRasterizer rasterizer = new SoftwareRasterizer(ModelFactory.MODEL_TEXTURE_SIZE);
+    private volatile boolean textureReady;
+    private volatile ModelAtlasReadback atlasReadback;
+    private int[] sourcePixels;
+    private int sourceTextureId;
+    private int sourceWidth;
+    private int sourceHeight;
 
 
     public SoftwareModelTextureBakery() {
@@ -89,10 +97,69 @@ public class SoftwareModelTextureBakery {
         int width = glGetTexLevelParameteri(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH);
         int height = glGetTexLevelParameteri(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT);
 
-        int[] pixels = new int[width * height];
-        glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+        long started = System.nanoTime();
+        var buffer = RenderResourceReuse.acquireModelSourceBuffer(Math.multiplyExact(width, height));
+        long allocationNanos = System.nanoTime() - started;
+        boolean installed = false;
+        try {
+            started = System.nanoTime();
+            this.sourceTextureId = glId;
+            this.sourceWidth = width;
+            this.sourceHeight = height;
+            this.sourcePixels = buffer.pixels();
+            this.atlasReadback = ModelAtlasReadback.tryBegin(glId, buffer.pixels());
+            long enqueueNanos = System.nanoTime() - started;
+            if (this.atlasReadback == null) {
+                started = System.nanoTime();
+                ModelAtlasReadback.readSynchronously(glId, buffer.pixels());
+                this.installTexture();
+                Logger.info("Voxy model atlas readback: mode=sync, width=" + width + ", height=" + height
+                        + ", reused=" + buffer.reused() + ", bytes=" + buffer.pixels().length * 4L
+                        + ", allocationMs=" + allocationNanos / 1_000_000.0
+                        + ", readbackMs=" + (System.nanoTime() - started) / 1_000_000.0);
+            } else {
+                Logger.info("Voxy model atlas readback: mode=pbo, width=" + width + ", height=" + height
+                        + ", reused=" + buffer.reused() + ", bytes=" + buffer.pixels().length * 4L
+                        + ", allocationMs=" + allocationNanos / 1_000_000.0
+                        + ", enqueueMs=" + enqueueNanos / 1_000_000.0);
+            }
+            installed = true;
+        } finally {
+            if (!installed) {
+                if (this.atlasReadback != null) this.atlasReadback.close();
+                this.atlasReadback = null;
+                this.sourcePixels = null;
+                RenderResourceReuse.releaseModelSourceBuffer(buffer.pixels());
+            }
+        }
+    }
 
-        this.rasterizer.setSamplerTexture(pixels, width, height);
+    private void installTexture() {
+        this.rasterizer.setSamplerTexture(this.sourcePixels, this.sourceWidth, this.sourceHeight);
+        this.textureReady = true;
+    }
+
+    public boolean prepareTextureOnWorker() {
+        if (this.textureReady) return true;
+        var readback = this.atlasReadback;
+        if (readback != null) readback.copyOnWorker();
+        return this.textureReady;
+    }
+
+    public void pollTextureReadback() {
+        var readback = this.atlasReadback;
+        if (readback == null) return;
+        try {
+            if (!readback.pollOnRenderThread()) return;
+        } catch (RuntimeException e) {
+            // Failures are published only before a worker copy starts or after
+            // its final native read. No worker can read a buffer closed here.
+            readback.close();
+            Logger.warn("Model atlas asynchronous readback failed; using synchronous readback", e);
+            ModelAtlasReadback.readSynchronously(this.sourceTextureId, this.sourcePixels);
+        }
+        this.installTexture();
+        this.atlasReadback = null;
     }
 
     private void bakeBlockModel(BlockState state, RenderType layer) {
@@ -205,6 +272,12 @@ public class SoftwareModelTextureBakery {
     }
 
     public void free() {
+        // ModelBakerySubsystem has joined its worker before reaching this point.
+        if (this.atlasReadback != null) this.atlasReadback.close();
+        this.atlasReadback = null;
+        this.rasterizer.releaseSamplerTexture();
+        RenderResourceReuse.releaseModelSourceBuffer(this.sourcePixels);
+        this.sourcePixels = null;
         this.opaqueVC.free();
         this.translucentVC.free();
     }

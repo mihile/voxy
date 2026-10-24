@@ -136,16 +136,23 @@ public class ModelFactory {
         this.mapper = mapper;
         this.storage = storage;
         this.bakery2 = new SoftwareModelTextureBakery();
-        this.bakery2.setupTexture();
+        try {
+            this.bakery2.setupTexture();
 
-        this.metadataCache = new long[1<<16];
-        this.fluidStateLUT = new int[1<<16];
-        this.idMappings = new int[1<<20];//Max of 1 million blockstates mapping to 65k model states
-        Arrays.fill(this.idMappings, -1);
-        Arrays.fill(this.fluidStateLUT, -1);
+            this.metadataCache = new long[1<<16];
+            this.fluidStateLUT = new int[1<<16];
+            this.idMappings = new int[1<<20];//Max of 1 million blockstates mapping to 65k model states
+            Arrays.fill(this.idMappings, -1);
+            Arrays.fill(this.fluidStateLUT, -1);
 
-        this.modelTexture2id.defaultReturnValue(-1);
-        this.addEntry(0);//Add air as the first entry
+            this.modelTexture2id.defaultReturnValue(-1);
+            this.addEntry(0);//Add air as the first entry
+        } catch (RuntimeException | Error failure) {
+            // No worker has started yet; do not leak an enqueued PBO on a failed construction.
+            try { this.bakery2.free(); } catch (RuntimeException | Error cleanup) { failure.addSuppressed(cleanup); }
+            MemoryUtil.nmemFree(this.bakeScratchBuffer);
+            throw failure;
+        }
     }
 
     public void setCustomBlockStateMapping(Object2IntMap<BlockState> mapping) {
@@ -260,6 +267,8 @@ public class ModelFactory {
     }
 
     public void processAllThings() {
+        // Keep queued work intact until the render thread validates the transfer.
+        if (!this.bakery2.prepareTextureOnWorker()) return;
         var biomeEntry = this.biomeQueue.poll();
         while (biomeEntry != null) {
             var biomeRegistry = Minecraft.getInstance().level.registryAccess().registryOrThrow(Registries.BIOME);
@@ -274,6 +283,7 @@ public class ModelFactory {
     }
 
     public void processUploads() {
+        this.bakery2.pollTextureReadback();
         var upload = this.uploadResults.poll();
         if (upload==null) return;
 

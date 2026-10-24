@@ -32,8 +32,16 @@ public abstract class MixinLevelRenderer implements IGetVoxyRenderSystem {
     @Inject(method = "allChanged()V", at = @At("RETURN"), order = 900)//We want to inject before sodium
     private void voxy$reloadVoxyRenderer(CallbackInfo ci) {
         this.voxy$shutdownRenderer();
-        if (this.level != null) {
-            this.voxy$createRenderer();
+        // Iris pipeline preparation, setLevel and Sodium can reload consecutively.
+        // Wait for an actual world frame instead of rebuilding after each request.
+    }
+
+    @Inject(method = "renderLevel", at = @At("HEAD"), order = 100)
+    private void voxy$prepareVanillaFrame(CallbackInfo ci) {
+        // With shaders, beginLevelRendering owns creation after Iris has selected
+        // the current dimension's pipeline. Do not build against the old pipeline.
+        if (!IrisUtil.irisShaderPackEnabled()) {
+            this.voxy$ensureRenderer();
         }
     }
 
@@ -41,12 +49,23 @@ public abstract class MixinLevelRenderer implements IGetVoxyRenderSystem {
     private void voxy$captureSetWorld(ClientLevel world, CallbackInfo ci) {
         if (this.level != world) {
             this.voxy$shutdownRenderer();
+            IrisUtil.CAPTURED_VIEWPORT_PARAMETERS = null;
         }
     }
 
     @Inject(method = "close", at = @At("HEAD"))
     private void voxy$injectClose(CallbackInfo ci) {
         this.voxy$shutdownRenderer();
+        IrisUtil.CAPTURED_VIEWPORT_PARAMETERS = null;
+    }
+
+    @Override
+    public void voxy$ensureRenderer() {
+        if (this.renderer == null && this.level != null
+                && VoxyConfig.CONFIG.enabled && VoxyConfig.CONFIG.isRenderingEnabled()
+                && VoxyCommon.getInstance() != null) {
+            this.voxy$createRenderer();
+        }
     }
 
     @Override

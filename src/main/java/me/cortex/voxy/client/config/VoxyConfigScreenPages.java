@@ -118,9 +118,7 @@ public abstract class VoxyConfigScreenPages {
                             s.enableRendering = v;
                             var vrsh = (IGetVoxyRenderSystem)Minecraft.getInstance().levelRenderer;
                             if (vrsh != null) {
-                                if (v) {
-                                    vrsh.voxy$createRenderer();
-                                } else {
+                                if (!v) {
                                     vrsh.voxy$shutdownRenderer();
                                 }
                             }
@@ -189,7 +187,7 @@ public abstract class VoxyConfigScreenPages {
             var renderer = (IGetVoxyRenderSystem) minecraft.levelRenderer;
             if (renderer != null && minecraft.level != null && VoxyConfig.CONFIG.isRenderingEnabled()) {
                 renderer.voxy$shutdownRenderer();
-                renderer.voxy$createRenderer();
+                // Recreate on the next frame, after the Iris reload below.
             }
         } catch (Throwable ignored) {}
 

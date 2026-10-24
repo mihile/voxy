@@ -149,6 +149,11 @@ public class IrisVoxyRenderPipelineData {
             return null;
         }
 
+        // Iris keys custom uniforms by object identity; its hash iteration order
+        // changes when a pipeline is rebuilt. Keep both the GLSL layout and its
+        // matching CPU writers stable so identical shaders can reuse binaries.
+        uniforms.sort(Comparator.comparing(UniformWritingHolder::name));
+
         List<UniformWritingHolder>[] ordering = new List[]{new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new ArrayList<>()};
 
         //Creates an optimial struct layout for the uniforms

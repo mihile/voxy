@@ -145,11 +145,9 @@ public class Shader extends TrackedObject {
 
 
         private int compileToProgram() {
-            int program = GL20C.glCreateProgram();
-            int[] shaders = new int[this.sources.size()];
+            Map<ShaderType, String> finalSources = new EnumMap<>(ShaderType.class);
             {
                 String defs = this.defines.entrySet().stream().map(a->"#define " + a.getKey() + " " + a.getValue() + "\n").collect(Collectors.joining());
-                int i = 0;
                 for (var entry : this.sources.entrySet()) {
                     String src = entry.getValue();
 
@@ -162,21 +160,38 @@ public class Shader extends TrackedObject {
                         src = src.replace(replacement.getKey(), replacement.getValue());
                     }
 
-                    shaders[i++] = createShader(entry.getKey(), src);
+                    finalSources.put(entry.getKey(), src);
                 }
             }
+            String cacheKey = ProgramBinaryCache.key(finalSources);
+            int cached = ProgramBinaryCache.restore(cacheKey);
+            if (cached != 0) return cached;
 
-            for (int i : shaders) {
-                GL20C.glAttachShader(program, i);
+            int program = GL20C.glCreateProgram();
+            List<Integer> shaders = new ArrayList<>(finalSources.size());
+            int attached = 0;
+            boolean linked = false;
+            try {
+                ProgramBinaryCache.prepare(cacheKey, program);
+                for (var entry : finalSources.entrySet()) {
+                    int shader = createShader(entry.getKey(), entry.getValue());
+                    shaders.add(shader);
+                    GL20C.glAttachShader(program, shader);
+                    attached++;
+                }
+                GL20C.glLinkProgram(program);
+                printProgramLinkLog(program);
+                verifyProgramLinked(program);
+                ProgramBinaryCache.store(cacheKey, program);
+                linked = true;
+                return program;
+            } finally {
+                for (int i = 0; i < shaders.size(); i++) {
+                    if (i < attached) GL20C.glDetachShader(program, shaders.get(i));
+                    GL20C.glDeleteShader(shaders.get(i));
+                }
+                if (!linked) GL20C.glDeleteProgram(program);
             }
-            GL20C.glLinkProgram(program);
-            for (int i : shaders) {
-                GL20C.glDetachShader(program, i);
-                GL20C.glDeleteShader(i);
-            }
-            printProgramLinkLog(program);
-            verifyProgramLinked(program);
-            return program;
         }
 
         public T compile() {

@@ -3,6 +3,7 @@ package me.cortex.voxy.client.core;
 import me.cortex.voxy.client.core.gl.Capabilities;
 import me.cortex.voxy.client.core.gl.GlBuffer;
 import me.cortex.voxy.client.core.gl.GlTexture;
+import me.cortex.voxy.client.core.gl.shader.ProgramBinaryCache;
 import me.cortex.voxy.client.core.model.ModelFactory;
 import me.cortex.voxy.client.core.rendering.section.geometry.BasicSectionGeometryData;
 import me.cortex.voxy.client.core.rendering.section.geometry.IGeometryData;
@@ -23,9 +24,36 @@ import static org.lwjgl.opengl.GL11C.GL_NO_ERROR;
 public class RenderResourceReuse {
     private static final ArrayList<GlTexture> MODEL_TEXTURE_CACHE = new ArrayList<>();
     private static final ArrayList<GlBuffer> GEOMETRY_BUFFER_CACHE = new ArrayList<>();
+    // One spare CPU readback array, transferred only after the model worker stops.
+    // Pixels are always overwritten from the current atlas before another bake.
+    private static final int MAX_MODEL_SOURCE_PIXELS = 1 << 26;
+    private static int[] modelSourcePixels;
+
+    public record ModelSourceBuffer(int[] pixels, boolean reused) {}
+
+    public static synchronized ModelSourceBuffer acquireModelSourceBuffer(int pixelCount) {
+        int[] pixels = modelSourcePixels;
+        modelSourcePixels = null;
+        if (pixels != null && pixels.length == pixelCount) {
+            return new ModelSourceBuffer(pixels, true);
+        }
+        return new ModelSourceBuffer(new int[pixelCount], false);
+    }
+
+    public static synchronized void releaseModelSourceBuffer(int[] pixels) {
+        if (pixels != null && pixels.length <= MAX_MODEL_SOURCE_PIXELS && modelSourcePixels == null) {
+            modelSourcePixels = pixels;
+        }
+    }
+
+    private static synchronized void clearModelSourceBuffer() {
+        modelSourcePixels = null;
+    }
 
     //Clears and frees any cached resources (used when the entire instance is shutdown)
     public static void clearResources() {
+        ProgramBinaryCache.clear();
+        clearModelSourceBuffer();
         MODEL_TEXTURE_CACHE.forEach(TrackedObject::free);
         GEOMETRY_BUFFER_CACHE.forEach(TrackedObject::free);
         MODEL_TEXTURE_CACHE.clear();

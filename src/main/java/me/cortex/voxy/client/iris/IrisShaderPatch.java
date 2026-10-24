@@ -19,6 +19,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.function.Function;
 import java.util.function.IntSupplier;
+import java.util.regex.Pattern;
 
 import static org.lwjgl.opengl.GL11.*;
 import static org.lwjgl.opengl.GL33.*;
@@ -316,6 +317,48 @@ public class IrisShaderPatch {
             .setLenient()
             .create();
 
+    // Euphoria 1.10.5/r5.9.3 includes this composite helper in the End's
+    // Voxy translucent pass, which has no texture-atlas texCoord varying.
+    // Restrict the correction to the known helper body and missing declaration.
+    private static final Pattern TEX_COORD_DECLARATION = Pattern.compile(
+            "(?m)^[\\t ]*(?:(?:in|uniform|varying|noperspective|smooth|flat|centroid|const|highp|mediump|lowp)[\\t ]+)*vec2[\\t ]+texCoord[\\t ]*(?:=|;)");
+
+    private static String fixEuphoriaVolumetricDepthUv(String source, String[] uniforms) {
+        if (source == null || !source.contains("void voxy_emitFragment(")
+                || !source.contains("float entityLinearDepth = texture")) {
+            return source;
+        }
+        boolean hasWidth = false, hasHeight = false;
+        for (String uniform : uniforms) {
+            hasWidth |= "viewWidth".equals(uniform);
+            hasHeight |= "viewHeight".equals(uniform);
+        }
+        if (!hasWidth || !hasHeight || TEX_COORD_DECLARATION.matcher(source).find()) {
+            return source;
+        }
+        String header = "vec4 GetVolumetricLight(inout float vlFactor, vec3 translucentMult, float lViewPos0, float lViewPos1, vec3 nViewPos, float VdotL, float VdotU, float z0, float z1, float z1lod, float dither)";
+        int function = source.indexOf(header);
+        int factorsEnd = source.indexOf("if (vlMult < 0.0001) return vec4(0.0);", function);
+        if (function < 0 || factorsEnd < 0) {
+            return source;
+        }
+        String factors = source.substring(function, factorsEnd);
+        String lookup = "float entityLinearDepth = texture(colortex13, texCoord).a;";
+        if (!factors.contains(lookup)) {
+            lookup = "float entityLinearDepth = texture2D(colortex13, texCoord).a;";
+        }
+        int offset = factors.indexOf(lookup);
+        if (offset < 0 || factors.indexOf(lookup, offset + lookup.length()) != -1
+                || !factors.contains("pow2(entityLinearDepth) * far")) {
+            return source;
+        }
+        int start = function + offset;
+        String corrected = lookup.replace("colortex13, texCoord",
+                "colortex13, gl_FragCoord.xy / vec2(viewWidth, viewHeight)");
+        Logger.info("Applied Euphoria Voxy volumetric depth screen-UV compatibility correction");
+        return source.substring(0, start) + corrected + source.substring(start + lookup.length());
+    }
+
     public static IrisShaderPatch makePatch(ShaderPack ipack, AbsolutePackPath directory, Function<AbsolutePackPath, String> sourceProvider) {
         String voxyPatchData = sourceProvider.apply(directory.resolve("voxy.json"));
         if (voxyPatchData == null) {//No voxy patch data in shaderpack
@@ -397,6 +440,8 @@ public class IrisShaderPatch {
             Logger.error("Shader has voxy patch data, but patch version is incorrect. expected " + VERSION + " got "+patchData.version);
             throw new IllegalStateException("Shader version mismatch expected " + VERSION + " got "+patchData.version);
         }
+        patchData.translucentPatchData = fixEuphoriaVolumetricDepthUv(
+                patchData.translucentPatchData, patchData.uniforms);
         return new IrisShaderPatch(patchData, ipack);
     }
 }

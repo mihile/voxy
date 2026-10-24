@@ -1,6 +1,6 @@
 package me.cortex.voxy.client.mixin.iris;
 
-import me.cortex.voxy.client.core.IGetVoxyRenderSystem;
+import me.cortex.voxy.client.config.VoxyConfig;
 import me.cortex.voxy.client.core.util.IrisUtil;
 import me.jellysquid.mods.sodium.client.render.chunk.ChunkRenderMatrices;
 import net.minecraft.client.Camera;
@@ -38,15 +38,17 @@ public class MixinLevelRenderer {
             LightTexture lightTexture,
             Matrix4f projectionMatrix,
             CallbackInfo ci) {
-        if (IrisUtil.irisShaderPackEnabled()) {
-            var renderer = ((IGetVoxyRenderSystem) this).voxy$getRenderSystem();
-            if (renderer != null) {
-                //Fixthe fucking viewport dims, fuck iris
-                glViewport(0,0,Minecraft.getInstance().getMainRenderTarget().width, Minecraft.getInstance().getMainRenderTarget().height);
+        if (IrisUtil.irisShaderPackEnabled() && VoxyConfig.CONFIG.enabled
+                && VoxyConfig.CONFIG.isRenderingEnabled()) {
+            // Capture even when a reload has invalidated the renderer. Iris can
+            // then create it against its selected pipeline later in this frame.
+            // Restore the main target dimensions before capturing this frame.
+            glViewport(0,0,Minecraft.getInstance().getMainRenderTarget().width, Minecraft.getInstance().getMainRenderTarget().height);
 
-                var pos = camera.getPosition();
-                IrisUtil.CAPTURED_VIEWPORT_PARAMETERS = new IrisUtil.CapturedViewportParameters(new ChunkRenderMatrices(projectionMatrix, matrices.last().pose()), pos.x, pos.y, pos.z);
-            }
+            var pos = camera.getPosition();
+            IrisUtil.CAPTURED_VIEWPORT_PARAMETERS = new IrisUtil.CapturedViewportParameters(new ChunkRenderMatrices(projectionMatrix, matrices.last().pose()), pos.x, pos.y, pos.z);
+        } else {
+            IrisUtil.CAPTURED_VIEWPORT_PARAMETERS = null;
         }
     }
 }

@@ -87,9 +87,11 @@ public class VoxyRenderSystem {
         //Keep the world loaded, NOTE: this is done FIRST, to keep and ensure that even if the rest of loading takes more
         // than timeout, we keep the world acquired
         world.acquireRef();
+        long initStarted = System.nanoTime();
         Logger.info("Creating Voxy render system");
 
-        System.gc();
+        // Renderer reloads run on the render thread. Explicit GC here stalls
+        // login and every dimension/resource reload; let the JVM schedule GC.
 
         if (Minecraft.getInstance().options.renderDistance().get()<3) {
             String msg = "Voxy: Having a vanilla render distance of 2 can cause rare culling near the edge of your screen issues, please use 3 or more";
@@ -104,9 +106,12 @@ public class VoxyRenderSystem {
         }
 
         try {
+            long phaseStarted = System.nanoTime();
             //wait for opengl to be finished, this should hopefully ensure all memory allocations are free
             glFinish();
             glFinish();
+            long syncNanos = System.nanoTime() - phaseStarted;
+            phaseStarted = System.nanoTime();
 
             this.worldIn = world;
             this.visibleSectionStream = new StreamedBoundStore();
@@ -130,16 +135,21 @@ public class VoxyRenderSystem {
 
                 this.nodeManager.start();
             }
+            long resourcesNanos = System.nanoTime() - phaseStarted;
+            phaseStarted = System.nanoTime();
 
             this.pipeline = RenderPipelineFactory.createPipeline(RenderProperties.getRenderProperties(), this.nodeManager, this.nodeCleaner, this.traversal, this::frexStillHasWork);
             this.pipeline.setupExtraModelBakeryData(this.modelService);//Configure the model service
 
             //Late stage traversal compile for shaders with taa
             this.traversal.lateStageCompile(this.pipeline);
+            long pipelineNanos = System.nanoTime() - phaseStarted;
+            phaseStarted = System.nanoTime();
 
 
             var sectionRenderer = backendFactory.create(this.pipeline, this.modelService.getStore(), this.geometryData);
             this.pipeline.setSectionRenderer(sectionRenderer);
+            long backendNanos = System.nanoTime() - phaseStarted;
             this.viewportSelector = new ViewportSelector<>(sectionRenderer::createViewport);
 
             {
@@ -162,6 +172,13 @@ public class VoxyRenderSystem {
             }
 
             this.boundOutlineRenderer = new BoundRenderer(this.pipeline);
+
+            Logger.info("Voxy init timings ms: gpuSync=" + syncNanos / 1_000_000.0
+                    + ", resources=" + resourcesNanos / 1_000_000.0
+                    + ", pipeline=" + pipelineNanos / 1_000_000.0
+                    + ", backendShaders=" + backendNanos / 1_000_000.0
+                    + ", total=" + (System.nanoTime() - initStarted) / 1_000_000.0);
+            Logger.info("Voxy shader binary cache: " + me.cortex.voxy.client.core.gl.shader.ProgramBinaryCache.statistics());
 
             Logger.info("Voxy render system created with " + this.geometryData.getMaxCapacity() + " geometry capacity, using pipeline '" + this.pipeline.getClass().getSimpleName() + "' with renderer '" + sectionRenderer.getClass().getSimpleName() + "'");
         } catch (RuntimeException e) {

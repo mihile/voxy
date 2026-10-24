@@ -1,0 +1,1 @@
+{"schemaVersion":1,"id":"voxy_storage_verification","version":"1","name":"Voxy storage failure verification","environment":"server","entrypoints":{"main":["me.cortex.voxy.verify.StorageFailureVerification"]},"depends":{"voxy":"*","fabric-lifecycle-events-v1":"*"}}

@@ -220,6 +220,37 @@ publishing() {
 	}
 }
 
+// Isolated server verification only; no test classes or JUnit in the release JAR.
+sourceSets {
+    storageVerification {
+        java.srcDir 'verification/storage/java'
+        resources.srcDir 'verification/storage/resources'
+        compileClasspath += sourceSets.test.compileClasspath + sourceSets.test.output
+        runtimeClasspath += compileClasspath
+    }
+}
+tasks.register('storageVerificationJar', Jar) {
+    dependsOn tasks.named('storageVerificationClasses'), tasks.named('testClasses')
+    archiveFileName = 'voxy-storage-verification-dev.jar'
+    destinationDirectory = layout.buildDirectory.dir('verification')
+    from sourceSets.storageVerification.output
+    from(sourceSets.test.output) { include 'me/cortex/voxy/commonImpl/WorldCreationFailureTest*.class' }
+    from {
+        configurations.testRuntimeClasspath.findAll {
+            it.name == 'junit-4.13.2.jar' || it.name == 'hamcrest-core-1.3.jar'
+        }.collect { zipTree(it) }
+    }
+    exclude 'META-INF/*.SF', 'META-INF/*.RSA', 'META-INF/*.DSA'
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+tasks.register('remapStorageVerificationJar', net.fabricmc.loom.task.RemapJarTask) {
+    dependsOn tasks.named('storageVerificationJar')
+    inputFile = tasks.named('storageVerificationJar').flatMap { it.archiveFile }
+    archiveFileName = 'voxy-storage-verification.jar'
+    destinationDirectory = layout.buildDirectory.dir('verification')
+    addNestedDependencies = false
+}
+
 
 tasks.register('makeExcludedRocksDB', Zip) {
     archiveExtension.set("jar")

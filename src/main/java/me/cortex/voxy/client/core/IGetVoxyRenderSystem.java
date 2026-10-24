@@ -4,6 +4,7 @@ import net.minecraft.client.Minecraft;
 
 public interface IGetVoxyRenderSystem {
     VoxyRenderSystem voxy$getRenderSystem();
+    void voxy$ensureRenderer();
     void voxy$shutdownRenderer();
     void voxy$createRenderer();
 

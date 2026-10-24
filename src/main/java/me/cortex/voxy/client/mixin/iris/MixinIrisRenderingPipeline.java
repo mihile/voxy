@@ -59,11 +59,10 @@ public class MixinIrisRenderingPipeline implements IGetVoxyPatchData, IGetIrisVo
     private void voxy$injectViewportSetup(CallbackInfo ci) {
         if (IrisUtil.CAPTURED_VIEWPORT_PARAMETERS != null) {
             var rendererGetter = (IGetVoxyRenderSystem) Minecraft.getInstance().levelRenderer;
+            // Also allow packs without Voxy patch data to use the normal LOD
+            // pipeline, as the old allChanged-based creation path did.
+            rendererGetter.voxy$ensureRenderer();
             var renderer = rendererGetter.voxy$getRenderSystem();
-            if (renderer == null && this.pipeline != null) {
-                rendererGetter.voxy$createRenderer();
-                renderer = rendererGetter.voxy$getRenderSystem();
-            }
             if (renderer != null) {
                 IrisUtil.CAPTURED_VIEWPORT_PARAMETERS.apply(renderer);
             }

@@ -22,7 +22,7 @@ public final class WorldEngine {
     public interface ISectionChangeCallback {void accept(WorldSection section, int updateFlags, int neighborMsk);}
     public interface ISectionSaveCallback {boolean save(WorldEngine engine, WorldSection section, boolean nonBlocking, boolean sectionAlreadyAcquired);}
 
-    private final TrackedObject thisTracker = TrackedObject.createTrackedObject(this);
+    private final TrackedObject thisTracker;
 
     public final SectionStorage storage;
     private final Mapper mapper;
@@ -61,7 +61,18 @@ public final class WorldEngine {
         this.storage = storage;
         this.mapper = new Mapper(this.storage);
         //5 cache size bits means that the section tracker has 32 separate maps that it uses
-        this.sectionTracker = new ActiveSectionTracker(6, storage::loadSection, cacheSize, this);
+        try {
+            this.sectionTracker = new ActiveSectionTracker(6, storage::loadSection, cacheSize, this);
+            // Failed construction never publishes an engine that can be freed later.
+            this.thisTracker = TrackedObject.createTrackedObject(this);
+        } catch (RuntimeException | Error failure) {
+            try {
+                this.mapper.close();
+            } catch (RuntimeException | Error cleanupFailure) {
+                if (cleanupFailure != failure) failure.addSuppressed(cleanupFailure);
+            }
+            throw failure;
+        }
     }
 
     public WorldSection acquireIfExists(int lvl, int x, int y, int z) {

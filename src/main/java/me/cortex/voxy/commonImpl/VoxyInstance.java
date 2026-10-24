@@ -149,25 +149,24 @@ public abstract class VoxyInstance {
             return world;
         }
         long stamp = this.activeWorldLock.writeLock();
+        try {
+            if (!this.isRunning) {
+                Logger.error("Tried getting world object on voxy instance but its not running");
+                return null;
+            }
 
-        if (!this.isRunning) {
-            Logger.error("Tried getting world object on voxy instance but its not running");
+            world = this.activeWorlds.get(identifier);
+            if (world == null) {
+                world = this.createWorld(identifier);
+            }
+            world.markActive();
+            if (incrementRef) world.acquireRef();
+            identifier.cachedEngineObject = new WeakReference<>(world);
+            return world;
+        } finally {
+            // Storage opening and mapper loading can throw; never strand the world lock.
             this.activeWorldLock.unlockWrite(stamp);
-            return null;
         }
-
-        world = this.activeWorlds.get(identifier);
-        if (world == null) {
-            //Create world here
-            world = this.createWorld(identifier);
-        }
-        world.markActive();
-
-        if (incrementRef) world.acquireRef();
-
-        this.activeWorldLock.unlockWrite(stamp);
-        identifier.cachedEngineObject = new WeakReference<>(world);
-        return world;
     }
 
 
@@ -181,7 +180,19 @@ public abstract class VoxyInstance {
             throw new IllegalStateException("Existing world with identifier");
         }
         Logger.info("Creating new world engine: " + identifier.getLongHash() + "@" + System.identityHashCode(this));
-        var world = new WorldEngine(this.createStorage(identifier), this);
+        var storage = this.createStorage(identifier);
+        WorldEngine world;
+        try {
+            world = new WorldEngine(storage, this);
+        } catch (RuntimeException | Error failure) {
+            // Ownership transfers to WorldEngine only once its constructor succeeds.
+            try {
+                storage.close();
+            } catch (RuntimeException | Error cleanupFailure) {
+                if (cleanupFailure != failure) failure.addSuppressed(cleanupFailure);
+            }
+            throw failure;
+        }
         world.setSaveCallback(this.savingService::enqueueSave);
         this.activeWorlds.put(identifier, world);
         return world;
