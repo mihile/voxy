@@ -58,6 +58,11 @@ public final class WorldEngine {
             cacheSize = 2048;
         }
 
+        if (net.fabricmc.loader.api.FabricLoader.getInstance().isModLoaded("minecraft") && net.fabricmc.loader.api.FabricLoader.getInstance().getEnvironmentType() == net.fabricmc.api.EnvType.SERVER) {
+            int cap = Integer.getInteger("voxy.secondaryCacheSections", Integer.getInteger("prominence.voxy.secondaryCacheSections", 512));
+            if (cap > 0) cacheSize = Math.min(cacheSize, Math.max(64, Math.min(cap, 2048)));
+        }
+
         this.storage = storage;
         this.mapper = new Mapper(this.storage);
         //5 cache size bits means that the section tracker has 32 separate maps that it uses

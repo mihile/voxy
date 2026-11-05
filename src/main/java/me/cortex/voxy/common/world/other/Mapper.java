@@ -266,7 +266,7 @@ public class Mapper {
     }
 
     public int getBlockStateOpacity(int blockId) {
-        return this.blockId2stateEntry.get(blockId).opacity;
+        return this.blockId2stateEntry.get(blockId).resolvedOpacity();
     }
 
     public int getIdForBiome(Holder<Biome> biome) {
@@ -361,15 +361,38 @@ public class Mapper {
     public static final class StateEntry {
         public final int id;
         public final BlockState state;
-        public final int opacity;
-        public StateEntry(int id, BlockState state) {
+        public volatile int opacity;
+        private volatile boolean pendingOpacity;
+        public StateEntry(int id, BlockState state) { this(id, state, false); }
+
+        private StateEntry(int id, BlockState state, boolean deferOpacity) {
             this.id = id;
             this.state = state;
             //Override opacity of leaves to be solid
             if (state.getBlock() instanceof LeavesBlock) {
                 this.opacity = 15;
+            } else if (deferOpacity) {
+                this.pendingOpacity = true;
             } else {
-                this.opacity = state.getLightBlock(new BlockGetter() {
+                this.opacity = computeOpacity();
+            }
+        }
+
+        public int resolvedOpacity() {
+            if (pendingOpacity) {
+                synchronized (this) {
+                    if (pendingOpacity) {
+                        opacity = computeOpacity();
+                        pendingOpacity = false;
+                    }
+                }
+            }
+            return opacity;
+        }
+
+        private int computeOpacity() {
+            BlockState state = this.state;
+            return state.getLightBlock(new BlockGetter() {
 
                     @Override
                     public int getHeight() {
@@ -397,7 +420,6 @@ public class Mapper {
                     }
                     
                 }, BlockPos.ZERO);
-            }
         }
 
         public byte[] serialize() {
@@ -427,14 +449,14 @@ public class Mapper {
                     state = BlockState.CODEC.parse(NbtOps.INSTANCE, bsc);
                     if (state.error().isPresent()) {
                         Logger.error("Could not decode blockstate setting to air. id:" + id + " error: " + state.error().get().message());
-                        return new StateEntry(id, Blocks.AIR.defaultBlockState());
+                        return new StateEntry(id, Blocks.AIR.defaultBlockState(), true);
                     } else {
                         Logger.info("Fixed blockstate to: " + state.getOrThrow(false, Logger::error));
                         forceResave[0] |= true;
-                        return new StateEntry(id, state.getOrThrow(false, Logger::error));
+                        return new StateEntry(id, state.getOrThrow(false, Logger::error), true);
                     }
                 } else {
-                    return new StateEntry(id, state.getOrThrow(false, Logger::error));
+                    return new StateEntry(id, state.getOrThrow(false, Logger::error), true);
                 }
             } catch (IOException e) {
                 throw new RuntimeException(e);
