@@ -9,7 +9,7 @@ public class RenderDistanceTracker {
     private static final int CHECK_DISTANCE_BLOCKS = 128;
     private final LongConsumer addTopLevelNode;
     private final LongConsumer removeTopLevelNode;
-    private final int processRate;
+    private int processRate;
     private final int minSec;
     private final int maxSec;
     private RingTracker tracker;
@@ -33,6 +33,10 @@ public class RenderDistanceTracker {
         this.renderDistance = renderDistance;
         this.tracker.unload();//Mark all as unload
         this.tracker = new RingTracker(this.tracker, renderDistance, ((int)this.posX)>>9, ((int)this.posZ)>>9, true);//Steal from previous tracker
+    }
+
+    public void setProcessRate(int processRate) {
+        this.processRate = Math.max(1, processRate);
     }
 
     public boolean setCenterAndProcess(double x, double z) {

@@ -1,6 +1,5 @@
 package me.cortex.voxy.client.core.gl;
 
-import me.cortex.voxy.common.util.MemoryBuffer;
 import me.cortex.voxy.common.util.TrackedObject;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.system.MemoryUtil;
@@ -21,11 +20,6 @@ public class GlBuffer extends TrackedObject {
     public GlBuffer(long size) {
         this(size, 0);
     }
-
-    public GlBuffer(MemoryBuffer buffer) {
-        this(buffer.size, 0, false, buffer.address);
-    }
-
     public GlBuffer(long size, boolean zero) {
         this(size, 0, zero);
     }
@@ -35,14 +29,10 @@ public class GlBuffer extends TrackedObject {
     }
 
     public GlBuffer(long size, int flags, boolean zero) {
-        this(size, flags, zero, 0);
-    }
-
-    private GlBuffer(long size, int flags, boolean zero, long data) {
         this.flags = flags;
         this.id = glCreateBuffers();
         this.size = size;
-        nglNamedBufferStorage(this.id, size, data, flags);
+        glNamedBufferStorage(this.id, size, flags);
         if ((flags&GL_SPARSE_STORAGE_BIT_ARB)==0 && zero) {
             this.zero();
         }

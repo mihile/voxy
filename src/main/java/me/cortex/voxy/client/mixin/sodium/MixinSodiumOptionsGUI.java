@@ -16,13 +16,14 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import java.util.List;
 
 @Mixin(SodiumOptionsGUI.class)
+@SuppressWarnings("removal")
 public class MixinSodiumOptionsGUI {
     @Shadow(remap = false) @Final private List<OptionPage> pages;
 
     @Inject(method = "<init>", at = @At("TAIL"))
     private void voxy$addConfigPage(Screen prevScreen, CallbackInfo ci) {
         if (VoxyCommon.isAvailable()) {
-            this.pages.add(VoxyConfigScreenPages.voxyOptionPage = VoxyConfigScreenPages.page());
+            this.pages.addAll(VoxyConfigScreenPages.pages());
         }
     }
 }

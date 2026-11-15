@@ -15,7 +15,6 @@ import org.apache.commons.lang3.stream.Streams;
 import org.lwjgl.system.MemoryUtil;
 
 import java.nio.ByteBuffer;
-import java.util.Arrays;
 import java.util.function.LongConsumer;
 
 //TODO: replace synchronize with StampedLock
@@ -125,7 +124,7 @@ public class MemoryStorageBackend extends StorageBackend {
 
     @Override
     public void close() {
-        Arrays.stream(this.maps).map(Long2ObjectMap::values).flatMap(ObjectCollection::stream).forEach(MemoryBuffer::free);
+        java.util.Arrays.stream(this.maps).map(Long2ObjectMap::values).flatMap(ObjectCollection::stream).forEach(MemoryBuffer::free);
         this.idMappings.values().forEach(MemoryUtil::memFree);
     }
 

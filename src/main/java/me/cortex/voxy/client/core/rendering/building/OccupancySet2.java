@@ -1,20 +1,16 @@
 package me.cortex.voxy.client.core.rendering.building;
 
-import me.cortex.voxy.common.util.BitUtil;
-
 import org.lwjgl.system.MemoryUtil;
 
 import java.util.Arrays;
-import java.util.BitSet;
-import java.util.Random;
 
 //16x16x16 occupancy set
 public class OccupancySet2 {
     private long topLvl;//4x4x4
     private final long[] bottomLvl = new long[4*4*4];
     public void set(final int pos) {
-        final long topBit = 1L<<BitUtil.compress(pos, 0b1100_1100_1100);
-        final int  botIdx =     BitUtil.compress(pos, 0b0011_0011_0011);
+        final long topBit = 1L<<me.cortex.voxy.common.util.BitMath.compress(pos, 0b1100_1100_1100);
+        final int  botIdx =     me.cortex.voxy.common.util.BitMath.compress(pos, 0b0011_0011_0011);
 
         int baseBotIdx = Long.bitCount(this.topLvl&(topBit-1));
         if ((this.topLvl & topBit) == 0) {
@@ -36,8 +32,8 @@ public class OccupancySet2 {
     }
 
     private boolean get(int pos) {
-        final long topBit = 1L<<BitUtil.compress(pos, 0b1100_1100_1100);
-        final int  botIdx =     BitUtil.compress(pos, 0b0011_0011_0011);
+        final long topBit = 1L<<me.cortex.voxy.common.util.BitMath.compress(pos, 0b1100_1100_1100);
+        final int  botIdx =     me.cortex.voxy.common.util.BitMath.compress(pos, 0b0011_0011_0011);
         if ((this.topLvl & topBit) == 0) {
             return false;
         }
@@ -80,20 +76,5 @@ public class OccupancySet2 {
         }
     }
 
-    public static void main(String[] args) {
-        for (int q = 0; q < 1000; q++) {
-            var o = new OccupancySet2();
-            var r = new Random(12523532643L*q);
-            var bs = new BitSet(16 * 16 * 16);
-            for (int i = 0; i < 5000; i++) {
-                int p = r.nextInt(16 * 16 * 16);
-                o.set(p);
-                bs.set(p);
 
-                for (int j = 0; j < 16 * 16 * 16; j++) {
-                    if (o.get(j) != bs.get(j)) throw new IllegalStateException();
-                }
-            }
-        }
-    }
 }

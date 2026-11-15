@@ -16,17 +16,21 @@ import java.lang.reflect.Modifier;
 import java.lang.reflect.Type;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.function.IntSupplier;
-import java.util.regex.Pattern;
 
 import static org.lwjgl.opengl.GL11.*;
 import static org.lwjgl.opengl.GL33.*;
 
+/** 1.20.1 Forge 的 Iris 扩展补丁解析器。 */
 public class IrisShaderPatch {
-    public static final int VERSION = ((IntSupplier)()->1).getAsInt();
-    public static final int SHADER_DEFINE_VERSION = 3;
+    public static final int VERSION = ((IntSupplier) () -> 1).getAsInt();
+    public static final int SHADER_DEFINE_VERSION = 2;
+    private static final ThreadLocal<Set<String>> UNIFORMS_BEING_BUILT = new ThreadLocal<>();
 
 
     private static final class SSBODeserializer implements JsonDeserializer<Int2ObjectOpenHashMap<String>> {
@@ -179,7 +183,6 @@ public class IrisShaderPatch {
         public float[] renderScale;
         public boolean useViewportDims;
         public boolean skipShaderDepthHackFix;
-        public boolean useDynamicFarPlane;
         //public boolean deferTranslucentRendering;
         public String checkValid() {
             if (this.blending != null) {
@@ -244,8 +247,26 @@ public class IrisShaderPatch {
     public String getTAAShift() {
         return this.patchData.taaOffset;// == null?"{return vec2(0.0);}":this.patchData.taaOffset;
     }
+
     public String[] getUniformList() {
         return this.patchData.uniforms;
+    }
+
+    public static void beginUniformRetention(IrisShaderPatch patch) {
+        if (patch == null) {
+            UNIFORMS_BEING_BUILT.remove();
+            return;
+        }
+        UNIFORMS_BEING_BUILT.set(Collections.unmodifiableSet(new HashSet<>(List.of(patch.getUniformList()))));
+    }
+
+    public static Set<String> uniformsBeingBuilt() {
+        Set<String> uniforms = UNIFORMS_BEING_BUILT.get();
+        return uniforms == null ? Collections.emptySet() : uniforms;
+    }
+
+    public static void endUniformRetention() {
+        UNIFORMS_BEING_BUILT.remove();
     }
     public Object2ObjectLinkedOpenHashMap<String, String> getSamplerSet() {
         return this.patchData.samplers;
@@ -276,10 +297,6 @@ public class IrisShaderPatch {
 
     public boolean deferedTranslucentRendering() {
         return false;//this.patchData.deferTranslucentRendering;
-    }
-
-    public boolean useDynamicFarPlane() {
-        return this.patchData.useDynamicFarPlane;
     }
 
     public Runnable createBlendSetup() {
@@ -317,50 +334,18 @@ public class IrisShaderPatch {
             .setLenient()
             .create();
 
-    // Euphoria 1.10.5/r5.9.3 includes this composite helper in the End's
-    // Voxy translucent pass, which has no texture-atlas texCoord varying.
-    // Restrict the correction to the known helper body and missing declaration.
-    private static final Pattern TEX_COORD_DECLARATION = Pattern.compile(
-            "(?m)^[\\t ]*(?:(?:in|uniform|varying|noperspective|smooth|flat|centroid|const|highp|mediump|lowp)[\\t ]+)*vec2[\\t ]+texCoord[\\t ]*(?:=|;)");
-
-    private static String fixEuphoriaVolumetricDepthUv(String source, String[] uniforms) {
-        if (source == null || !source.contains("void voxy_emitFragment(")
-                || !source.contains("float entityLinearDepth = texture")) {
-            return source;
-        }
-        boolean hasWidth = false, hasHeight = false;
-        for (String uniform : uniforms) {
-            hasWidth |= "viewWidth".equals(uniform);
-            hasHeight |= "viewHeight".equals(uniform);
-        }
-        if (!hasWidth || !hasHeight || TEX_COORD_DECLARATION.matcher(source).find()) {
-            return source;
-        }
-        String header = "vec4 GetVolumetricLight(inout float vlFactor, vec3 translucentMult, float lViewPos0, float lViewPos1, vec3 nViewPos, float VdotL, float VdotU, float z0, float z1, float z1lod, float dither)";
-        int function = source.indexOf(header);
-        int factorsEnd = source.indexOf("if (vlMult < 0.0001) return vec4(0.0);", function);
-        if (function < 0 || factorsEnd < 0) {
-            return source;
-        }
-        String factors = source.substring(function, factorsEnd);
-        String lookup = "float entityLinearDepth = texture(colortex13, texCoord).a;";
-        if (!factors.contains(lookup)) {
-            lookup = "float entityLinearDepth = texture2D(colortex13, texCoord).a;";
-        }
-        int offset = factors.indexOf(lookup);
-        if (offset < 0 || factors.indexOf(lookup, offset + lookup.length()) != -1
-                || !factors.contains("pow2(entityLinearDepth) * far")) {
-            return source;
-        }
-        int start = function + offset;
-        String corrected = lookup.replace("colortex13, texCoord",
-                "colortex13, gl_FragCoord.xy / vec2(viewWidth, viewHeight)");
-        Logger.info("Applied Euphoria Voxy volumetric depth screen-UV compatibility correction");
-        return source.substring(0, start) + corrected + source.substring(start + lookup.length());
-    }
-
     public static IrisShaderPatch makePatch(ShaderPack ipack, AbsolutePackPath directory, Function<AbsolutePackPath, String> sourceProvider) {
-        String voxyPatchData = sourceProvider.apply(directory.resolve("voxy.json"));
+        AbsolutePackPath patchDirectory = directory;
+        String voxyPatchData = sourceProvider.apply(patchDirectory.resolve("voxy.json"));
+        if (voxyPatchData == null) {
+            // Newer packs commonly keep auxiliary programs below shaders/program.
+            // Oculus 1.20.1 does not redirect this lookup for Voxy itself.
+            patchDirectory = directory.resolve("program");
+            voxyPatchData = sourceProvider.apply(patchDirectory.resolve("voxy.json"));
+            if (voxyPatchData != null) {
+                Logger.info("Using Voxy shader patch from the program directory");
+            }
+        }
         if (voxyPatchData == null) {//No voxy patch data in shaderpack
             return null;
         }
@@ -401,18 +386,18 @@ public class IrisShaderPatch {
             }
 
             {//Inject data from the auxilery files if they are present
-                var opaque = sourceProvider.apply(directory.resolve("voxy_opaque.glsl"));
+                var opaque = sourceProvider.apply(patchDirectory.resolve("voxy_opaque.glsl"));
                 if (opaque != null) {
                     Logger.info("External opaque shader patch applied");
                     patchData.opaquePatchData = opaque;
                 }
-                var translucent = sourceProvider.apply(directory.resolve("voxy_translucent.glsl"));
+                var translucent = sourceProvider.apply(patchDirectory.resolve("voxy_translucent.glsl"));
                 if (translucent != null) {
                     Logger.info("External translucent shader patch applied");
                     patchData.translucentPatchData = translucent;
                 }
                 //This might be ok? not.. sure if is nice or not
-                var taa = sourceProvider.apply(directory.resolve("voxy_taa.glsl"));
+                var taa = sourceProvider.apply(patchDirectory.resolve("voxy_taa.glsl"));
                 if (taa != null) {
                     Logger.info("External taa shader patch applied");
                     patchData.taaOffset = taa;
@@ -440,8 +425,6 @@ public class IrisShaderPatch {
             Logger.error("Shader has voxy patch data, but patch version is incorrect. expected " + VERSION + " got "+patchData.version);
             throw new IllegalStateException("Shader version mismatch expected " + VERSION + " got "+patchData.version);
         }
-        patchData.translucentPatchData = fixEuphoriaVolumetricDepthUv(
-                patchData.translucentPatchData, patchData.uniforms);
         return new IrisShaderPatch(patchData, ipack);
     }
 }

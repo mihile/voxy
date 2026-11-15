@@ -3,7 +3,7 @@ package me.cortex.voxy.client.mixin.minecraft;
 import me.cortex.voxy.client.ICheekyClientChunkCache;
 import me.cortex.voxy.client.config.VoxyConfig;
 import me.cortex.voxy.common.world.service.VoxelIngestService;
-import net.fabricmc.loader.api.FabricLoader;
+import me.cortex.voxy.commonImpl.VoxyCommon;
 import net.minecraft.client.multiplayer.ClientChunkCache;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.chunk.LevelChunk;
@@ -20,7 +20,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(ClientChunkCache.class)
 public class MixinClientChunkCache implements ICheekyClientChunkCache {
     @Unique
-    private static final boolean BOBBY_INSTALLED = FabricLoader.getInstance().isModLoaded("bobby");
+    private static final boolean BOBBY_INSTALLED = VoxyCommon.getPlatformUtil().isModLoaded("bobby");
 
     @Shadow
     private volatile ClientChunkCache.Storage storage;
@@ -41,9 +41,21 @@ public class MixinClientChunkCache implements ICheekyClientChunkCache {
     }
 
     @Inject(method = "drop", at = @At("HEAD"))
-    public void voxy$captureChunkBeforeUnload(int x, int z, CallbackInfo ci) {
+    public void voxy$captureChunkBeforeUnload(
+        //? if 1.20.1 {
+        int x, int z,
+        //?} else {
+        /*ChunkPos pos,
+        *///? }
+        CallbackInfo ci) {
         if (VoxyConfig.CONFIG.ingestEnabled && BOBBY_INSTALLED) {
-            var chunk = this.voxy$cheekyGetChunk(x, z);
+            var chunk = this.voxy$cheekyGetChunk(
+            //? if 1.20.1 {
+                x, z
+            //?} else {
+                /*pos.x, pos.z
+            *///?}
+            );
             if (chunk != null) {
                 VoxelIngestService.tryAutoIngestChunk(chunk);
             }

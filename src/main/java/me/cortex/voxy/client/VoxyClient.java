@@ -2,14 +2,10 @@ package me.cortex.voxy.client;
 
 import me.cortex.voxy.client.core.gl.Capabilities;
 import me.cortex.voxy.client.core.rendering.util.SharedIndexBuffer;
-import me.cortex.voxy.client.core.util.ExpansionUtil;
-import me.cortex.voxy.client.config.VoxyConfig;
 import me.cortex.voxy.common.Logger;
 import me.cortex.voxy.commonImpl.VoxyCommon;
-import net.fabricmc.api.ClientModInitializer;
-import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
-import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
+import net.minecraft.resources.ResourceLocation;
 
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -19,36 +15,11 @@ import java.util.HashSet;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
-public class VoxyClient implements ClientModInitializer {
+public abstract class VoxyClient {
     private static final HashSet<String> FREX = new HashSet<>();
     private static FileLock EXCLUSIVE_LOCK;
-    private static boolean INSTANCE_FACTORY_SET;
-    private static boolean RENDER_BACKEND_READY;
-    private static boolean RENDER_BACKEND_INITIALIZED;
-
-    private static VoxyClientInstance createInstance() {
-        if (!RENDER_BACKEND_READY) {
-            Logger.error("Voxy render backend is not initialized");
-            return null;
-        }
-        return new VoxyClientInstance();
-    }
-
-    private static void setInstanceFactory() {
-        if (!INSTANCE_FACTORY_SET) {
-            VoxyCommon.setInstanceFactory(VoxyClient::createInstance);
-            INSTANCE_FACTORY_SET = true;
-        }
-        VoxyConfig.reloadAfterVoxyAvailable();
-    }
-
     public static void initVoxyClient() {
-        if (RENDER_BACKEND_INITIALIZED) {
-            return;
-        }
-        RENDER_BACKEND_INITIALIZED = true;
-        setInstanceFactory();
-
+        Logger.markClientHudReady();
         Capabilities.init();//Ensure clinit is called
 
         if (Capabilities.INSTANCE.hasBrokenDepthSampler) {
@@ -80,44 +51,55 @@ public class VoxyClient implements ClientModInitializer {
         if (systemSupported) {
 
             SharedIndexBuffer.INSTANCE.id();
-            RENDER_BACKEND_READY = true;
+
+            VoxyCommon.setInstanceFactory(VoxyClientInstance::new);
+
+            me.cortex.voxy.client.compat.LodPipelineHooks.register(
+                    me.cortex.voxy.client.core.beacon.DistantBeaconRenderer.INSTANCE);
+            net.minecraftforge.common.MinecraftForge.EVENT_BUS.register(
+                    me.cortex.voxy.client.core.beacon.DistantBeaconRenderer.INSTANCE);
+            if (isClassAvailable("com.simibubi.create.Create")) {
+                var createRenderer = me.cortex.voxy.client.compat.create.DistantCreateRenderer.INSTANCE;
+                net.minecraftforge.common.MinecraftForge.EVENT_BUS.register(createRenderer);
+                me.cortex.voxy.client.compat.LodPipelineHooks.register(createRenderer);
+                var kineticRenderer = me.cortex.voxy.client.compat.create.DistantKineticRenderer.INSTANCE;
+                net.minecraftforge.common.MinecraftForge.EVENT_BUS.register(kineticRenderer);
+                me.cortex.voxy.client.compat.LodPipelineHooks.register(kineticRenderer);
+                var trackRenderer = me.cortex.voxy.client.compat.create.DistantTrackRenderer.INSTANCE;
+                net.minecraftforge.common.MinecraftForge.EVENT_BUS.register(trackRenderer);
+                me.cortex.voxy.client.compat.LodPipelineHooks.register(trackRenderer);
+            }
 
             if (!Capabilities.INSTANCE.subgroup) {
                 Logger.warn("GPU does not support subgroup operations, expect some performance degradation");
             }
 
         }
-
-        if (!ExpansionUtil.isJava21()) {
-            Logger.warn("Cannot use native Integer/Long compression. Using fallback...");
-        }
-    }
-
-    @Override
-    public void onInitializeClient() {
-        setInstanceFactory();
-
-        ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> {
-            if (VoxyCommon.isAvailable()) {
-                dispatcher.register(VoxyCommands.register());
-            }
-        });
-
-        FabricLoader.getInstance()
-                .getEntrypoints("frex_flawless_frames", Consumer.class)
-                .forEach(api -> ((Consumer<Function<String,Consumer<Boolean>>>)api).accept(name->active->{if (active) {
-                    FREX.add(name);
-                } else {
-                    FREX.remove(name);
-                }}));
     }
 
     public static boolean isFrexActive() {
         return !FREX.isEmpty();
     }
 
+    static void setFrexState(String name, boolean active) {
+        if (active) {
+            FREX.add(name);
+        } else {
+            FREX.remove(name);
+        }
+    }
+
     public static int getOcclusionDebugState() {
         return 0;
+    }
+
+    private static boolean isClassAvailable(String name) {
+        try {
+            Class.forName(name, false, VoxyClient.class.getClassLoader());
+            return true;
+        } catch (ClassNotFoundException | LinkageError ignored) {
+            return false;
+        }
     }
 
     public static boolean disableSodiumChunkRender() {

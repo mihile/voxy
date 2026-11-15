@@ -6,6 +6,7 @@ import me.cortex.voxy.client.core.gl.shader.ShaderType;
 import me.cortex.voxy.client.core.rendering.util.SharedIndexBuffer;
 
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 import static org.lwjgl.opengl.GL11C.*;
 import static org.lwjgl.opengl.GL15C.GL_ELEMENT_ARRAY_BUFFER;
@@ -17,22 +18,6 @@ public class FullscreenBlit {
     private static final int EMPTY_VAO = glCreateVertexArrays();
 
     private final Shader shader;
-    public FullscreenBlit(String fragId) {
-        this(RenderProperties.LEGACY, fragId);
-    }
-
-    public FullscreenBlit(String vertId, String fragId) {
-        this(RenderProperties.LEGACY, vertId, fragId);
-    }
-
-    public <T extends Shader> FullscreenBlit(String fragId, Consumer<Shader.Builder<T>> applyer) {
-        this(RenderProperties.LEGACY, fragId, applyer);
-    }
-
-    public <T extends Shader> FullscreenBlit(String vertId, String fragId, Consumer<Shader.Builder<T>> applyer) {
-        this(RenderProperties.LEGACY, vertId, fragId, applyer);
-    }
-
     public FullscreenBlit(RenderProperties properties, String fragId) {
         this(properties, fragId, b->{});
     }

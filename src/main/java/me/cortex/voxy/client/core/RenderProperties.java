@@ -1,5 +1,6 @@
 package me.cortex.voxy.client.core;
 
+import com.mojang.blaze3d.systems.RenderSystem;
 import me.cortex.voxy.client.core.gl.shader.Shader;
 import me.cortex.voxy.client.core.util.IrisUtil;
 import me.cortex.voxy.client.iris.IGetIrisVoxyPipelineData;
@@ -8,8 +9,6 @@ import net.irisshaders.iris.Iris;
 import static org.lwjgl.opengl.GL11C.*;
 
 public record RenderProperties(boolean isZero2One, boolean isReverseZ, boolean useBlockAtlasUVs) {
-    /** Minecraft 1.20.1 uses the classic OpenGL -1..1 depth range and forward Z. */
-    public static final RenderProperties LEGACY = new RenderProperties(false, false, false);
 
     public <T extends Shader.Builder<J>, J extends Shader> T apply(T builder) {
         return (T) builder.defineIf("USE_ZERO_ONE_DEPTH", this.isZero2One)
@@ -59,7 +58,11 @@ public record RenderProperties(boolean isZero2One, boolean isReverseZ, boolean u
     }
 
     public static RenderProperties getRenderProperties() {
-        RenderProperties properties = LEGACY;
+        RenderProperties properties = new RenderProperties(
+                org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL45.GL_CLIP_DEPTH_MODE)
+                        == org.lwjgl.opengl.GL45.GL_ZERO_TO_ONE,
+                false,
+                false);
 
         if (IrisUtil.IRIS_INSTALLED && IrisUtil.SHADER_SUPPORT) {
             properties = new RenderProperties(properties.isZero2One(), properties.isReverseZ(), irisUseBlockAtlasUv());

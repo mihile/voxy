@@ -30,6 +30,12 @@ public class BasicAsyncGeometryManager implements IGeometryManager {
     private final IntOpenHashSet heapRemoveUploads = new IntOpenHashSet(1024);//Any removals are added here, so that it can be properly synced
     private long usedCapacity = 0;
 
+    public static final class GeometryCapacityException extends IllegalStateException {
+        public GeometryCapacityException(String message) {
+            super(message);
+        }
+    }
+
     public BasicAsyncGeometryManager(int maxSectionCount, long geometryCapacity) {
         this.allocationSet = new HierarchicalBitSet(maxSectionCount);
         if (geometryCapacity%GEOMETRY_ELEMENT_SIZE != 0)  throw new IllegalStateException();
@@ -50,13 +56,24 @@ public class BasicAsyncGeometryManager implements IGeometryManager {
         //Free the old id and replace it with a new one
         // if oldId is -1, then treat it as not previously existing
 
-        //Free the old data if oldId is supplied
+        SectionMeta newMeta;
+        int newId;
         if (oldId != -1) {
-            //Its here just for future optimization potential
+            newMeta = this.createMeta(section);
             this.removeSection(oldId);
+            newId = this.allocationSet.allocateNext();
+        } else {
+            newId = this.allocationSet.allocateNext();
+            if (newId == HierarchicalBitSet.SET_FULL) {
+                throw new IllegalStateException("Tried adding section when section count is already at capacity");
+            }
+            try {
+                newMeta = this.createMeta(section);
+            } catch (GeometryCapacityException e) {
+                this.allocationSet.free(newId);
+                throw e;
+            }
         }
-
-        int newId =  this.allocationSet.allocateNext();
         if (newId == HierarchicalBitSet.SET_FULL) {
             throw new IllegalStateException("Tried adding section when section count is already at capacity");
         }
@@ -69,8 +86,6 @@ public class BasicAsyncGeometryManager implements IGeometryManager {
                 throw new IllegalStateException();
             }
         }
-
-        var newMeta = this.createMeta(section);
 
         if (newId == this.sectionMetadata.size()) {
             this.sectionMetadata.add(newMeta);
@@ -109,11 +124,11 @@ public class BasicAsyncGeometryManager implements IGeometryManager {
         if ((section.geometryBuffer.size%GEOMETRY_ELEMENT_SIZE)!=0) throw new IllegalStateException();
         int size = (int) (section.geometryBuffer.size/GEOMETRY_ELEMENT_SIZE);
         //clamp size upwards to ranges of 127
-        int upsized = (size+127)&~127;
+        int upsized = allocationSize(size);
         //Address
         int addr = (int)this.allocationHeap.alloc(upsized);
         if (addr == -1) {
-            throw new IllegalStateException("Geometry OOM. requested allocation size (in elements): " + size + ", Heap size at top remaining: " + (this.allocationHeap.getLimit()-this.allocationHeap.getSize()) + ", used elements: " + this.usedCapacity);
+            throw new GeometryCapacityException("Geometry capacity exhausted. requested allocation size (in elements): " + size + ", heap size at top remaining: " + (this.allocationHeap.getLimit()-this.allocationHeap.getSize()) + ", used elements: " + this.usedCapacity);
         }
         this.usedCapacity += upsized;
         //Create upload
@@ -123,6 +138,16 @@ public class BasicAsyncGeometryManager implements IGeometryManager {
         this.heapRemoveUploads.remove(addr);
         //Create Meta
         return new SectionMeta(section.position, section.aabb, addr, size, section.offsets, section.childExistence);
+    }
+
+    private static int allocationSize(int elementCount) {
+        return (elementCount+127)&~127;
+    }
+
+    public boolean canUpload(BuiltSection section) {
+        if (section.isEmpty()) return true;
+        if ((section.geometryBuffer.size%GEOMETRY_ELEMENT_SIZE)!=0) return false;
+        return this.allocationHeap.canAlloc(allocationSize((int) (section.geometryBuffer.size/GEOMETRY_ELEMENT_SIZE)));
     }
 
     @Override

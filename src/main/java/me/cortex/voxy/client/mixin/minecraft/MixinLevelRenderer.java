@@ -29,17 +29,17 @@ public abstract class MixinLevelRenderer implements IGetVoxyRenderSystem {
         return this.renderer;
     }
 
-    @Inject(method = "allChanged()V", at = @At("RETURN"), order = 900)//We want to inject before sodium
+    @Inject(method = "allChanged()V", at = @At("RETURN"))
     private void voxy$reloadVoxyRenderer(CallbackInfo ci) {
+        me.cortex.voxy.client.compat.LodPipelineHooks.onResourceReload();
         this.voxy$shutdownRenderer();
-        // Iris pipeline preparation, setLevel and Sodium can reload consecutively.
-        // Wait for an actual world frame instead of rebuilding after each request.
+        IrisUtil.CAPTURED_VIEWPORT_PARAMETERS = null;
+        // Iris/Oculus pipeline prep, setLevel, and Embeddium can reload consecutively.
+        // Wait for an actual world frame instead of eagerly rebuilding on every reload.
     }
 
-    @Inject(method = "renderLevel", at = @At("HEAD"), order = 100)
+    @Inject(method = "renderLevel", at = @At("HEAD"))
     private void voxy$prepareVanillaFrame(CallbackInfo ci) {
-        // With shaders, beginLevelRendering owns creation after Iris has selected
-        // the current dimension's pipeline. Do not build against the old pipeline.
         if (!IrisUtil.irisShaderPackEnabled()) {
             this.voxy$ensureRenderer();
         }
@@ -53,7 +53,7 @@ public abstract class MixinLevelRenderer implements IGetVoxyRenderSystem {
         }
     }
 
-    @Inject(method = "close", at = @At("HEAD"))
+    @Inject(method = "close", at = @At("HEAD"), remap = false)
     private void voxy$injectClose(CallbackInfo ci) {
         this.voxy$shutdownRenderer();
         IrisUtil.CAPTURED_VIEWPORT_PARAMETERS = null;
@@ -78,7 +78,7 @@ public abstract class MixinLevelRenderer implements IGetVoxyRenderSystem {
 
     @Override
     public void voxy$createRenderer() {
-        if (this.renderer != null) throw new IllegalStateException("Cannot have multiple renderers");
+        if (this.renderer != null) return;
         if (!VoxyConfig.CONFIG.enabled) {
             Logger.info("Not creating renderer due to disabled");
             return;

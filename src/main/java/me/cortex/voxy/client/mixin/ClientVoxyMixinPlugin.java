@@ -1,70 +1,67 @@
 package me.cortex.voxy.client.mixin;
 
-import me.cortex.voxy.common.Logger;
-import net.fabricmc.loader.api.FabricLoader;
-import org.objectweb.asm.ClassReader;
+import me.cortex.voxy.commonImpl.VoxyCommon;
 import org.objectweb.asm.tree.ClassNode;
-import org.objectweb.asm.tree.MethodNode;
+import org.spongepowered.asm.mixin.MixinEnvironment;
 import org.spongepowered.asm.mixin.extensibility.IMixinConfigPlugin;
 import org.spongepowered.asm.mixin.extensibility.IMixinInfo;
 
-import java.io.InputStream;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
 public class ClientVoxyMixinPlugin implements IMixinConfigPlugin {
-    private static boolean sodiumLegacy = true;
+    private static boolean isClient;
     private static boolean valkyrienSkiesInstalled;
     private static boolean nvidiumInstalled;
-    private static boolean flashbackInstalled;
+    private static boolean irisInstalled;
+    private static boolean createInstalled;
 
     @Override
     public void onLoad(String mixinPackage) {
-        valkyrienSkiesInstalled = FabricLoader.getInstance().isModLoaded("valkyrienskies");
-        nvidiumInstalled = FabricLoader.getInstance().isModLoaded("nvidium");
-        flashbackInstalled = FabricLoader.getInstance().isModLoaded("flashback");
-
-        try (InputStream stream = getClass().getClassLoader()
-                .getResourceAsStream("me/jellysquid/mods/sodium/client/render/SodiumWorldRenderer.class")) {
-
-            if (stream != null) {
-                ClassReader reader = new ClassReader(stream);
-                ClassNode node = new ClassNode();
-                reader.accept(node, 0);
-
-                for (MethodNode method : node.methods) {
-                    if (method.name.equals("drawChunkLayer") && method.desc.contains("ChunkRenderMatrices")) {
-                        sodiumLegacy = false;
-                        break;
-                    }
-                }
-            } else {
-                Logger.error("SodiumWorldRenderer class not found");
-            }
-        } catch (Exception e) {
-            Logger.error(e);
+        isClient = MixinEnvironment.getCurrentEnvironment().getSide() == MixinEnvironment.Side.CLIENT;
+        if (!isClient) {
+            return;
         }
+        valkyrienSkiesInstalled = VoxyCommon.getPlatformUtil().isModLoaded("valkyrienskies");
+        nvidiumInstalled = VoxyCommon.getPlatformUtil().isModLoaded("nvidium");
+        irisInstalled = VoxyCommon.getPlatformUtil().isModLoaded("iris")
+                || VoxyCommon.getPlatformUtil().isModLoaded("oculus");
+        createInstalled = VoxyCommon.getPlatformUtil().isModLoaded("create");
     }
 
     @Override
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
-        if (mixinClassName.endsWith("flashback.MixinFlashbackMeta")
-                || mixinClassName.endsWith("flashback.MixinFlashbackRecorder")) {
-            return flashbackInstalled;
+        if (!isClient) {
+            return false;
         }
-
-        if (mixinClassName.endsWith("nvidium.MixinRenderPipeline")) {
-            return nvidiumInstalled;
-        }
-
-        return true;
+        return !mixinClassName.contains(".iris.") || irisInstalled;
     }
 
     @Override public List<String> getMixins() {
-        if (valkyrienSkiesInstalled && !nvidiumInstalled) {
-            return List.of(sodiumLegacy ? "sodium.MixinSodiumWorldRendererLegacy" : "sodium.MixinSodiumWorldRenderer");
+        if (!isClient) {
+            return List.of();
         }
-        return List.of("sodium.MixinDefaultChunkRenderer");
+        List<String> mixins = new ArrayList<>();
+        if (valkyrienSkiesInstalled && !nvidiumInstalled) {
+            mixins.add("sodium.MixinSodiumWorldRendererVS");
+        } else {
+            mixins.add("sodium.MixinDefaultChunkRenderer");
+        }
+        if (createInstalled) {
+            mixins.add("create.MixinVisualizationManagerImpl");
+            mixins.add("create.AccessorAbstractEntityVisual");
+            mixins.add("create.MixinSafeBlockEntityRenderer");
+            mixins.add("create.MixinSmartBlockEntity");
+            mixins.add("create.MixinContraptionEntityRenderer");
+            mixins.add("create.MixinContraptionVisual");
+            mixins.add("create.MixinContraptionShapeRevision");
+            mixins.add("create.MixinContraptionBlockChange");
+            mixins.add("create.MixinCarriageShapeRevision");
+            mixins.add("create.MixinCarriageBlockChange");
+        }
+
+        return mixins;
     }
 
     @Override

@@ -1,9 +1,12 @@
 package me.cortex.voxy.client.mixin.iris;
 
 import me.cortex.voxy.client.config.VoxyConfig;
+import me.cortex.voxy.client.core.IGetVoxyRenderSystem;
 import me.cortex.voxy.client.core.util.IrisUtil;
 import me.jellysquid.mods.sodium.client.render.chunk.ChunkRenderMatrices;
 import net.minecraft.client.Camera;
+//? if 1.21.1
+//import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.LevelRenderer;
@@ -27,7 +30,7 @@ import static org.lwjgl.opengl.GL11C.glViewport;
 public class MixinLevelRenderer {
     @Shadow @Final private Minecraft minecraft;
 
-    @Inject(method = "renderLevel", at = @At("HEAD"), order = 100)
+    @Inject(method = "renderLevel", at = @At("HEAD"))
     private void voxy$injectIrisCompat(
             PoseStack matrices,
             float tickDelta,
@@ -38,15 +41,15 @@ public class MixinLevelRenderer {
             LightTexture lightTexture,
             Matrix4f projectionMatrix,
             CallbackInfo ci) {
+        Matrix4f positionMatrix = matrices.last().pose();
         if (IrisUtil.irisShaderPackEnabled() && VoxyConfig.CONFIG.enabled
                 && VoxyConfig.CONFIG.isRenderingEnabled()) {
-            // Capture even when a reload has invalidated the renderer. Iris can
-            // then create it against its selected pipeline later in this frame.
-            // Restore the main target dimensions before capturing this frame.
-            glViewport(0,0,Minecraft.getInstance().getMainRenderTarget().width, Minecraft.getInstance().getMainRenderTarget().height);
+            glViewport(0, 0, Minecraft.getInstance().getMainRenderTarget().width,
+                    Minecraft.getInstance().getMainRenderTarget().height);
 
             var pos = camera.getPosition();
-            IrisUtil.CAPTURED_VIEWPORT_PARAMETERS = new IrisUtil.CapturedViewportParameters(new ChunkRenderMatrices(projectionMatrix, matrices.last().pose()), pos.x, pos.y, pos.z);
+            IrisUtil.CAPTURED_VIEWPORT_PARAMETERS = new IrisUtil.CapturedViewportParameters(
+                    new ChunkRenderMatrices(projectionMatrix, positionMatrix), pos.x, pos.y, pos.z);
         } else {
             IrisUtil.CAPTURED_VIEWPORT_PARAMETERS = null;
         }

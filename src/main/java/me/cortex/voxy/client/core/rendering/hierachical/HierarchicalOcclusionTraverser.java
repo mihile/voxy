@@ -372,10 +372,10 @@ public class HierarchicalOcclusionTraverser {
         //    Logger.warn("Count larger than 'maxRequestCount', overflow captured. Overflowed by " + (count-REQUEST_QUEUE_SIZE));
         //}
         if (count != 0) {
-            var buffer = new MemoryBuffer(count*8L+8).cpyFrom(ptr-8);
-            //Write back the exact count into the new memory buffer (not the download stream buffer)
-            MemoryUtil.memPutInt(buffer.address, count);
-            this.nodeManager.submitRequestBatch(buffer);// the -8 is because we incremented it by 8
+            var requests = new MemoryBuffer(count * 8L + 8).cpyFrom(ptr - 8);
+            // 回读映射只读，仅在拥有的副本中更新截断后的数量。
+            MemoryUtil.memPutInt(requests.address, count);
+            this.nodeManager.submitRequestBatch(requests);
         }
     }
 

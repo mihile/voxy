@@ -1,29 +1,25 @@
 package me.cortex.voxy.client.core;
 
+import me.cortex.voxy.common.util.ExceptionCleanup;
+
 import com.mojang.blaze3d.systems.RenderSystem;
 import me.cortex.voxy.client.config.VoxyConfig;
 import me.cortex.voxy.client.core.gl.GlFramebuffer;
 import me.cortex.voxy.client.core.gl.GlTexture;
-import me.cortex.voxy.client.core.gl.shader.Shader;
-import me.cortex.voxy.client.core.gl.shader.ShaderType;
 import me.cortex.voxy.client.core.rendering.Viewport;
 import me.cortex.voxy.client.core.rendering.hierachical.AsyncNodeManager;
 import me.cortex.voxy.client.core.rendering.hierachical.HierarchicalOcclusionTraverser;
 import me.cortex.voxy.client.core.rendering.hierachical.NodeCleaner;
 import me.cortex.voxy.client.core.rendering.post.FullscreenBlit;
-import me.cortex.voxy.client.core.rendering.util.DepthFramebuffer;
 import me.cortex.voxy.client.core.util.GPUTiming;
 import net.minecraft.client.Minecraft;
-import net.minecraft.util.Mth;
 import org.joml.Matrix4f;
-import org.lwjgl.system.MemoryStack;
 
 import java.util.List;
 import java.util.function.BooleanSupplier;
 
-import static org.lwjgl.opengl.ARBComputeShader.glDispatchCompute;
-import static org.lwjgl.opengl.ARBShaderImageLoadStore.glBindImageTexture;
 import static org.lwjgl.opengl.GL11C.GL_BLEND;
+import static org.lwjgl.opengl.GL11C.GL_COLOR;
 import static org.lwjgl.opengl.GL11C.GL_DEPTH_COMPONENT;
 import static org.lwjgl.opengl.GL11C.GL_DEPTH_TEST;
 import static org.lwjgl.opengl.GL11C.GL_NEAREST;
@@ -38,54 +34,40 @@ import static org.lwjgl.opengl.GL11C.glDisable;
 import static org.lwjgl.opengl.GL11C.glEnable;
 import static org.lwjgl.opengl.GL14C.glBlendFuncSeparate;
 import static org.lwjgl.opengl.GL20C.glUniform4f;
-import static org.lwjgl.opengl.GL30.GL_DEPTH_ATTACHMENT;
-import static org.lwjgl.opengl.GL30.GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME;
 import static org.lwjgl.opengl.GL30C.*;
-import static org.lwjgl.opengl.GL33C.*;
 import static org.lwjgl.opengl.GL43.GL_DEPTH_STENCIL_TEXTURE_MODE;
-import static org.lwjgl.opengl.GL45.glGetNamedFramebufferAttachmentParameteri;
+import static org.lwjgl.opengl.GL42C.GL_FRAMEBUFFER_BARRIER_BIT;
+import static org.lwjgl.opengl.GL42C.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT;
+import static org.lwjgl.opengl.GL42C.GL_TEXTURE_FETCH_BARRIER_BIT;
+import static org.lwjgl.opengl.GL42C.glMemoryBarrier;
 import static org.lwjgl.opengl.GL45C.glBindTextureUnit;
+import static org.lwjgl.opengl.GL45C.glClearNamedFramebufferfv;
 import static org.lwjgl.opengl.GL45C.glTextureParameterf;
 
 public class NormalRenderPipeline extends AbstractRenderPipeline {
+    private static final float[] CLEAR_COLOUR = {0.0f, 0.0f, 0.0f, 0.0f};
     private GlTexture colourTex;
     private GlTexture colourSSAOTex;
-    private final GlFramebuffer fbSSAO = new GlFramebuffer();
+    private final GlFramebuffer fbSSAO;
 
-    private final FogMode fogMode;
     private final FullscreenBlit finalBlit;
 
     private final SSAO ssao;
-
-    public enum FogMode {
-        FOG_AND_FADE(false, true, true),
-        FOG(false, true, false),
-        FADE(true, false, true),
-        OFF(true, false, false);
-
-        public final boolean removesVanillaEnvFog;
-        public final boolean hasFog;
-        public final boolean hasFade;
-
-        FogMode(boolean removesVanillaEnvFog, boolean hasFog, boolean hasFade) {
-            this.removesVanillaEnvFog = removesVanillaEnvFog;
-            this.hasFog = hasFog;
-            this.hasFade = hasFade;
-        }
-    }
-
-    protected NormalRenderPipeline(AsyncNodeManager nodeManager, NodeCleaner nodeCleaner, HierarchicalOcclusionTraverser traversal, BooleanSupplier frexSupplier) {
-        this(RenderProperties.LEGACY, nodeManager, nodeCleaner, traversal, frexSupplier);
-    }
+    private final Matrix4f targetTransform = new Matrix4f();
 
     protected NormalRenderPipeline(RenderProperties properties, AsyncNodeManager nodeManager, NodeCleaner nodeCleaner, HierarchicalOcclusionTraverser traversal, BooleanSupplier frexSupplier) {
         super(properties, nodeManager, nodeCleaner, traversal, frexSupplier, false);
-        this.fogMode = VoxyConfig.CONFIG.getFogMode();
-        this.finalBlit = new FullscreenBlit(properties, "voxy:post/blit_texture_depth_cutout.frag",
-                a -> a.defineIf("HAS_FOG", this.fogMode.hasFog)
-                        .defineIf("HAS_FADE", this.fogMode.hasFade)
-                        .define("EMIT_COLOUR"));
-        this.ssao = SSAO.createSSAO(properties, VoxyConfig.CONFIG.getSSAOMode());
+        try {
+            this.fbSSAO = new GlFramebuffer();
+            this.finalBlit = new FullscreenBlit(properties, "voxy:post/blit_texture_depth_cutout.frag",
+                    a->a.define("USE_ENV_FOG").define("EMIT_COLOUR"));
+
+
+            this.ssao = SSAO.createSSAO(properties, VoxyConfig.CONFIG.getSSAOMode());
+        } catch (RuntimeException | Error failure) {
+            this.releaseResources(new ExceptionCleanup(failure));
+            throw failure;
+        }
     }
 
     @Override
@@ -111,7 +93,9 @@ public class NormalRenderPipeline extends AbstractRenderPipeline {
             glTextureParameterf(this.fb.getDepthTex().id, GL_DEPTH_STENCIL_TEXTURE_MODE, GL_DEPTH_COMPONENT);
         }
 
-        this.initDepthStencil(viewport, sourceFB, this.fb.framebuffer.id, viewport.width, viewport.height, viewport.width, viewport.height);
+        glClearNamedFramebufferfv(this.fb.framebuffer.id, GL_COLOR, 0, CLEAR_COLOUR);
+        this.initDepthStencil(viewport, sourceFB, this.fb.framebuffer.id,
+                viewport.width, viewport.height, viewport.width, viewport.height);
 
         return this.fb.getDepthTex().id;
     }
@@ -120,59 +104,54 @@ public class NormalRenderPipeline extends AbstractRenderPipeline {
     protected void postOpaquePreTranslucent(Viewport<?> viewport, int sourceFrameBuffer) {
         GPUTiming.INSTANCE.marker("ao");
         this.ssao.computeSSAO(viewport, this.colourSSAOTex, this.colourTex, this.fb.getDepthTex(), sourceFrameBuffer);
+        glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT
+                | GL_FRAMEBUFFER_BARRIER_BIT
+                | GL_TEXTURE_FETCH_BARRIER_BIT);
         glBindFramebuffer(GL_FRAMEBUFFER, this.fbSSAO.id);
     }
 
     @Override
     protected void finish(Viewport<?> viewport, int sourceFrameBuffer, int srcWidth, int srcHeight) {
         this.finalBlit.bind();
+        var vrs = IGetVoxyRenderSystem.getNullable();
+        float fogStart = vrs != null ? vrs.getCapturedFogStart() : RenderSystem.getShaderFogStart();
+        float fogEnd   = vrs != null ? vrs.getCapturedFogEnd()   : RenderSystem.getShaderFogEnd();
+        float[] fogColor = vrs != null ? vrs.getCapturedFogColor() : RenderSystem.getShaderFogColor();
+        boolean requiredFog = vrs != null && vrs.isCapturedFogRequired();
 
-        float fogStart = RenderSystem.getShaderFogStart();
-        float fogEnd = RenderSystem.getShaderFogEnd();
-        float[] fogColor = RenderSystem.getShaderFogColor();
-
-        float renderDistance = Minecraft.getInstance().gameRenderer.getRenderDistance();
-
-        boolean fogCoversAllRendering = fogEnd < renderDistance;
-
-        if (this.fogMode.hasFog) {
-            if (Math.abs(fogEnd - fogStart) > 1) {
-                float invEndFogDelta = 1f / (fogEnd - fogStart);
-                float endDistance = Math.max(renderDistance, 20 * 16); //TODO: make this constant a config option
-                endDistance *= (float) Math.sqrt(3);
-                float startDelta = -fogStart * invEndFogDelta;
-                float clampedDist = Mth.clamp(endDistance * invEndFogDelta + startDelta, 0.0f, 1.0f);
-                glUniform4f(4, invEndFogDelta, startDelta, clampedDist, 0);
-                glUniform4f(5, fogColor[0], fogColor[1], fogColor[2], 1.0f);
-            } else {
-                glUniform4f(4, 0, 0, 0, 0);
-                glUniform4f(5, 0, 0, 0, 0);
-            }
+        boolean optionalFog = VoxyConfig.CONFIG.useEnvironmentalFog && VoxyConfig.CONFIG.fogIntensity > 0.0f;
+        if (!requiredFog && optionalFog) {
+            fogEnd = Math.max(16.0f, VoxyConfig.CONFIG.skyFogDistance * 16.0f
+                    * (VoxyConfig.CONFIG.fogDistancePercent / 100.0f));
+            fogStart = fogEnd * 0.5f;
         }
-        if (this.fogMode.hasFade) {
-            int mode = 1; // XZ distance fade, matching current upstream.
-            float rd = VoxyConfig.CONFIG.sectionRenderDistance * 16 * 32
-                    - (float) Math.sqrt(mode > 1 ? 32 * 32 * 32 : 32 * 32);
-            float vanillaRd = VoxyRenderSystem.getRenderDistance();
-            float start = Math.max(vanillaRd, rd * 0.9f);
-            float end = Math.max(vanillaRd, rd);
-            float scale = 1.0f / Math.max(end - start, 0.001f);
-            glUniform4f(6, mode, -start * scale, scale, 0);
+        float fogRange = Math.abs(fogEnd - fogStart);
+        boolean useFog = requiredFog ? fogRange > 1.0e-4f : optionalFog && fogRange > 1.0f;
+        if (useFog) {
+            glUniform2f(4, fogStart, fogEnd);
+            glUniform4f(5, fogColor[0], fogColor[1], fogColor[2], 1.0f);
+            glUniform1i(6, RenderSystem.getShaderFogShape().getIndex());
+            glUniform1f(7, requiredFog ? 1.0f : Math.max(0.0f, Math.min(1.0f, VoxyConfig.CONFIG.fogIntensity)));
+            glUniform1f(8, requiredFog ? 0.0f : Math.max(0.0f, Math.min(1.0f, VoxyConfig.CONFIG.fogDensity)));
+            glUniform1i(9, requiredFog ? 1 : 0);
+        } else {
+            glUniform2f(4, 0, 0);
+            glUniform4f(5, 0, 0, 0, 0);
+            glUniform1i(6, 0);
+            glUniform1f(7, 0);
+            glUniform1f(8, 0);
+            glUniform1i(9, 0);
         }
 
         glBindTextureUnit(3, this.colourSSAOTex.id);
 
-        //Do alpha blending
-        //Unbelievably jank hack, only blit out to the framebuffer if we are rendering fog
-        if (!fogCoversAllRendering) {
-            glEnable(GL_BLEND);
-            glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-            AbstractRenderPipeline.transformBlitDepth(this.finalBlit, this.fb.getDepthTex().id, sourceFrameBuffer, viewport, new Matrix4f(viewport.vanillaProjection).mul(viewport.modelView));
-            glDisable(GL_BLEND);
-        } else {
-            glDisable(GL_STENCIL_TEST);
-            glDisable(GL_DEPTH_TEST);
-        }
+        glEnable(GL_BLEND);
+        glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+
+        AbstractRenderPipeline.transformBlitDepth(this.finalBlit, this.fb.getDepthTex().id,
+                sourceFrameBuffer, viewport,
+                this.targetTransform.set(viewport.vanillaProjection).mul(viewport.modelView));
+        glDisable(GL_BLEND);
         //glBlitNamedFramebuffer(this.fbSSAO.id, sourceFrameBuffer, 0,0, viewport.width, viewport.height, 0,0, viewport.width, viewport.height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
     }
 
@@ -188,14 +167,19 @@ public class NormalRenderPipeline extends AbstractRenderPipeline {
 
     @Override
     public void free() {
-        this.finalBlit.delete();
-        this.ssao.free();
-        this.fbSSAO.free();
-        if (this.colourTex != null) {
-            this.colourTex.free();
-            this.colourSSAOTex.free();
-        }
-        super.free0();
+        this.assertNotFreed();
+        var cleanup = new ExceptionCleanup(null);
+        this.releaseResources(cleanup);
+        cleanup.rethrow();
+    }
+
+    private void releaseResources(ExceptionCleanup cleanup) {
+        if (this.ssao != null) cleanup.run(this.ssao::free);
+        if (this.finalBlit != null) cleanup.run(this.finalBlit::delete);
+        if (this.colourTex != null) cleanup.run(this.colourTex::free);
+        if (this.colourSSAOTex != null) cleanup.run(this.colourSSAOTex::free);
+        if (this.fbSSAO != null) cleanup.run(this.fbSSAO::free);
+        cleanup.run(super::free0);
     }
 
     @Override

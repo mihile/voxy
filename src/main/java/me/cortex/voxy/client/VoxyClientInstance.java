@@ -1,6 +1,5 @@
 package me.cortex.voxy.client;
 
-import me.cortex.voxy.client.compat.FlashbackCompat;
 import me.cortex.voxy.client.config.VoxyConfig;
 import me.cortex.voxy.client.core.RenderResourceReuse;
 import me.cortex.voxy.client.mixin.sodium.AccessorSodiumWorldRenderer;
@@ -15,27 +14,48 @@ import me.cortex.voxy.common.config.section.SectionStorageConfig;
 import me.cortex.voxy.common.config.storage.other.CompressionStorageAdaptor;
 import me.cortex.voxy.common.config.storage.rocksdb.RocksDBStorageBackend;
 import me.cortex.voxy.commonImpl.ImportManager;
+import me.cortex.voxy.commonImpl.VoxyCommon;
 import me.cortex.voxy.commonImpl.VoxyInstance;
 import me.cortex.voxy.commonImpl.WorldIdentifier;
 import me.jellysquid.mods.sodium.client.render.SodiumWorldRenderer;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.level.storage.LevelResource;
+import java.nio.file.Files;
 import java.nio.file.Path;
 
 public class VoxyClientInstance extends VoxyInstance {
     private final Config config;
     private final Path basePath;
     private final boolean noIngestOverride;
+    private record Bootstrap(Path path, Config config, boolean noIngestOverride) {}
+
     public VoxyClientInstance() {
+        this(prepare());
+    }
+
+    private VoxyClientInstance(Bootstrap bootstrap) {
         super();
-        var path = FlashbackCompat.getReplayStoragePath();
-        this.noIngestOverride = path != null;
+        this.basePath = bootstrap.path();
+        this.config = bootstrap.config();
+        this.noIngestOverride = bootstrap.noIngestOverride();
+        try {
+            this.updateDedicatedThreads();
+        } catch (RuntimeException | Error failure) {
+            super.shutdown();
+            throw failure;
+        }
+    }
+
+    private static Bootstrap prepare() {
+        var path = VoxyCommon.getPlatformUtil().getReplayStoragePath(VoxyCommon.getPlatformUtil().isModLoaded("flashback"));
+        boolean noIngestOverride = path != null;
         if (path == null) {
             path = getBasePath();
         }
-        this.basePath = path.normalize();
-        this.config = StorageConfigUtil.getCreateStorageConfig(Config.class, c->c.version==1&&c.sectionStorageConfig!=null, ()->DEFAULT_STORAGE_CONFIG, this.basePath);
-        this.updateDedicatedThreads();
+        path = path.normalize();
+        Config config = StorageConfigUtil.getCreateStorageConfig(Config.class, c->c.version==1&&c.sectionStorageConfig!=null, ()->DEFAULT_STORAGE_CONFIG, path);
+        if (config.disabled) throw new me.cortex.voxy.commonImpl.DontCreateInstance();
+        return new Bootstrap(path, config, noIngestOverride);
     }
 
     @Override

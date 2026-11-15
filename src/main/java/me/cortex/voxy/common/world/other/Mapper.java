@@ -42,10 +42,11 @@ import java.util.function.Consumer;
 
 //There are independent mappings for biome and block states, these get combined in the shader and allow for more
 // variaty of things
+/** 1.20.1 Forge 的方块/生物群系 ID 映射器，编码布局与主版本一致。 */
 public class Mapper {
-    public static int isNotAirInt(long id) {
-        return Math.min(getBlockId(id), 1);
-    }
+    private static final long SURFACE_CARRIER_BLOCK_MASK = (1L << 20) - 1L;
+    private static final long SURFACE_CARRIER_FLAG = 1L << 20;
+    private static final long SURFACE_CARRIER_MASK = SURFACE_CARRIER_FLAG | SURFACE_CARRIER_BLOCK_MASK;
     private static final int BLOCK_STATE_TYPE = 1;
     private static final int BIOME_TYPE = 2;
 
@@ -102,6 +103,30 @@ public class Mapper {
 
     public static long airWithLight(int light) {
         return Integer.toUnsignedLong(light&0xFF)<<56;
+    }
+
+    public static long makeSurfaceCarrier(long voxel) {
+        int block = getBlockId(voxel);
+        return (voxel & ~((((1L << 20) - 1L) << 27) | SURFACE_CARRIER_MASK))
+                | SURFACE_CARRIER_FLAG | Integer.toUnsignedLong(block);
+    }
+
+    public static boolean isSurfaceCarrier(long voxel) {
+        return (voxel & SURFACE_CARRIER_FLAG) != 0;
+    }
+
+    public static long clearSurfaceCarrier(long voxel) {
+        return voxel & ~SURFACE_CARRIER_MASK;
+    }
+
+    public static long restoreSurfaceCarrier(long voxel) {
+        return withBlockBiome(voxel, (int) (voxel & SURFACE_CARRIER_BLOCK_MASK), getBiomeId(voxel));
+    }
+
+    public static long applySurfaceCarrier(long below, long carrier) {
+        return withLight(
+                withBlockBiome(below, (int) (carrier & SURFACE_CARRIER_BLOCK_MASK), getBiomeId(carrier)),
+                getLightId(carrier));
     }
 
     public void setStateCallback(Consumer<StateEntry> stateCallback) {
@@ -363,7 +388,10 @@ public class Mapper {
         public final BlockState state;
         public volatile int opacity;
         private volatile boolean pendingOpacity;
-        public StateEntry(int id, BlockState state) { this(id, state, false); }
+
+        public StateEntry(int id, BlockState state) {
+            this(id, state, false);
+        }
 
         private StateEntry(int id, BlockState state, boolean deferOpacity) {
             this.id = id;
@@ -379,47 +407,47 @@ public class Mapper {
         }
 
         public int resolvedOpacity() {
-            if (pendingOpacity) {
+            if (this.pendingOpacity) {
                 synchronized (this) {
-                    if (pendingOpacity) {
-                        opacity = computeOpacity();
-                        pendingOpacity = false;
+                    if (this.pendingOpacity) {
+                        this.opacity = computeOpacity();
+                        this.pendingOpacity = false;
                     }
                 }
             }
-            return opacity;
+            return this.opacity;
         }
 
         private int computeOpacity() {
             BlockState state = this.state;
             return state.getLightBlock(new BlockGetter() {
 
-                    @Override
-                    public int getHeight() {
-                        return 0;
-                    }
+                @Override
+                public int getHeight() {
+                    return 0;
+                }
 
-                    @Override
-                    public int getMinBuildHeight() {
-                        return 0;
-                    }
+                @Override
+                public int getMinBuildHeight() {
+                    return 0;
+                }
 
-                    @Override
-                    public BlockEntity getBlockEntity(BlockPos arg0) {
-                        return null;
-                    }
+                @Override
+                public BlockEntity getBlockEntity(BlockPos arg0) {
+                    return null;
+                }
 
-                    @Override
-                    public BlockState getBlockState(BlockPos blockPos) {
-                        return state;
-                    }
+                @Override
+                public BlockState getBlockState(BlockPos blockPos) {
+                    return state;
+                }
 
-                    @Override
-                    public FluidState getFluidState(BlockPos blockPos) {
-                        return state.getFluidState();
-                    }
-                    
-                }, BlockPos.ZERO);
+                @Override
+                public FluidState getFluidState(BlockPos blockPos) {
+                    return state.getFluidState();
+                }
+
+            }, BlockPos.ZERO);
         }
 
         public byte[] serialize() {

@@ -42,3 +42,28 @@ bool modelIsTranslucent(BlockModel model) {
 bool modelIsShaded(BlockModel model) {
     return ((model.flagsA)&8u) != 0;
 }
+
+bool modelUsesFluidDatum(BlockModel model) {
+    return ((model.flagsA)&16u) != 0;
+}
+
+bool modelUsesBalancedLeafCutout(BlockModel model) {
+    return ((model.flagsA)&32u) != 0;
+}
+
+bool modelIsLava(BlockModel model) {
+    return ((model.flagsA)&64u) != 0;
+}
+
+bool modelIsLeaf(BlockModel model) {
+    return ((model.flagsA)&128u) != 0;
+}
+
+bool modelIsFluid(BlockModel model) {
+    return ((model.flagsA)&4096u) != 0;
+}
+
+float modelFluidHeight(BlockModel model) {
+    // 高度占 8..11 位，12 位是流体标记。
+    return float((model.flagsA >> 8u) & 15u) / 9.0;
+}

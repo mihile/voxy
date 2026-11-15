@@ -3,7 +3,7 @@ package me.cortex.voxy.client.core.util;
 import me.cortex.voxy.client.core.VoxyRenderSystem;
 import me.cortex.voxy.client.core.rendering.Viewport;
 import me.jellysquid.mods.sodium.client.render.chunk.ChunkRenderMatrices;
-import net.fabricmc.loader.api.FabricLoader;
+import me.cortex.voxy.commonImpl.VoxyCommon;
 import net.irisshaders.iris.Iris;
 import net.irisshaders.iris.api.v0.IrisApi;
 import net.irisshaders.iris.gl.IrisRenderSystem;
@@ -14,13 +14,13 @@ import java.io.IOException;
 public class IrisUtil {
     public record CapturedViewportParameters(ChunkRenderMatrices matrices, double x, double y, double z) {
         public Viewport<?> apply(VoxyRenderSystem vrs) {
-            return vrs.setupViewport(this.matrices, this.x, this.y, this.z);
+            return vrs.setupViewport(this.matrices.projection(), this.matrices.modelView(), this.x, this.y, this.z);
         }
     }
 
     public static CapturedViewportParameters CAPTURED_VIEWPORT_PARAMETERS;
 
-    public static final boolean IRIS_INSTALLED = FabricLoader.getInstance().isModLoaded("iris");
+    public static final boolean IRIS_INSTALLED = VoxyCommon.getPlatformUtil().isModLoaded("iris") || VoxyCommon.getPlatformUtil().isModLoaded("oculus");
     public static final boolean SHADER_SUPPORT = true;//System.getProperty("voxy.enableExperimentalIrisPipeline", "false").equalsIgnoreCase("true");
 
 
@@ -56,7 +56,7 @@ public class IrisUtil {
     }
 
     private static boolean irisShaderPackEnabled0() {
-        return Iris.isPackInUseQuick();
+        return Iris.getCurrentPack().isPresent();
     }
 
     public static boolean irisShaderPackEnabled() {

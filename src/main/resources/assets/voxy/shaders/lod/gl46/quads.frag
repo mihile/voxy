@@ -21,6 +21,9 @@ layout(location = 0) in flat uvec4 interData;
 #ifndef USE_NV_BARRY
 layout(location = 1) in vec2 uv;
 #endif
+layout(location = 2) in float boundaryDistanceSquared;
+layout(location = 3) in vec3 trackLocalPosition;
+layout(binding = 2, std430) readonly buffer TrackReplacementBlocks { ivec4 replacedTracks[]; };
 
 #ifdef DEBUG_RENDER
 layout(location = 7) in flat uint quadDebug;
@@ -48,6 +51,19 @@ vec4 uint2vec4RGBA(uint colour) {
     return vec4((uvec4(colour)>>uvec4(24,16,8,0))&uvec4(0xFF))/255.0;
 }
 
+uint unpackAlpha8(float alpha) {
+    return uint(round(clamp(alpha, 0.0, 1.0) * 255.0));
+}
+
+bool sampleTintMask(vec2 texturePos) {
+    return (unpackAlpha8(textureLod(blockModelAtlas, texturePos, 0).a) & 1u) != 0u;
+}
+
+vec4 clearTintMaskFromColour(vec4 colour) {
+    colour.a = float(unpackAlpha8(colour.a) & 0xFEu) / 255.0;
+    return colour;
+}
+
 //bool useMipmaps() {
 //    return (interData.x&2u)==0u;
 //}
@@ -56,8 +72,53 @@ uint tintingState() {
     return (interData.x>>2)&3u;
 }
 
+bool modelIsLeaf() {
+    return ((interData.w >> 12u) & 1u) != 0u;
+}
+
 bool useDiscard() {
     return (interData.x&1u)==1u;
+}
+
+bool useBalancedLeafCutout() {
+    return ((interData.x >> 1u) & 1u) == 1u;
+}
+
+bool useIndependentWaterBoundary() {
+    return ((interData.w >> 11u) & 1u) == 1u;
+}
+
+bool useOriginalLeafHandoff() {
+    return useBalancedLeafCutout() || ((interData.w >> 12u) & 1u) == 1u;
+}
+
+bool useCoarseFluidProxy() {
+    return ((interData.w >> 13u) & 1u) == 1u;
+}
+
+vec2 varyBalancedLeafUV(vec2 localUV, vec2 tile, out uint transform, out uint leafHash) {
+    uvec2 tilePos = uvec2(max(tile, vec2(0.0f)));
+    uint hash = interData.w >> 16u;
+    hash ^= tilePos.x * 0x9e3779b9u;
+    hash ^= tilePos.y * 0x85ebca6bu;
+    hash ^= hash >> 16u;
+    hash *= 0x7feb352du;
+    hash ^= hash >> 15u;
+    leafHash = hash;
+    transform = hash & 7u;
+    if ((transform & 1u) != 0u) localUV = localUV.yx;
+    if ((transform & 2u) != 0u) localUV.x = 1.0f - localUV.x;
+    if ((transform & 4u) != 0u) localUV.y = 1.0f - localUV.y;
+    return fract(localUV + vec2((hash >> 3u) & 3u, (hash >> 5u) & 3u) / 16.0f);
+}
+
+bool sparseBalancedLeafHole(vec2 localUV, uint hash) {
+    uvec2 pixel = uvec2(clamp(floor(localUV * 16.0f), vec2(0.0f), vec2(15.0f)));
+    hash ^= pixel.x * 0x27d4eb2du;
+    hash ^= pixel.y * 0x165667b1u;
+    hash ^= hash >> 15u;
+    hash *= 0x85ebca6bu;
+    return (hash & 63u) == 0u;
 }
 
 uint getFace() {
@@ -99,10 +160,7 @@ vec4 computeColour(vec2 texturePos, vec4 colour) {
     uint tintingFunction = tintingState();
     bool doTint = tintingFunction==2;//Always tint if function == 2
     if (tintingFunction == 1) {//partial tint
-        vec4 tintTest = textureLod(blockModelAtlas, texturePos, 0);
-        if (abs(tintTest.r-tintTest.g) < 0.02f && abs(tintTest.g-tintTest.b) < 0.02f) {
-            doTint = true;
-        }
+        doTint = modelIsLeaf() || sampleTintMask(texturePos);
     }
     if (doTint) {
         colour *= uint2vec4RGBA(interData.z).yzwx;
@@ -113,8 +171,30 @@ vec4 computeColour(vec2 texturePos, vec4 colour) {
 #endif
 
 
+bool hasDedicatedTrack() {
+    if (trackReplacement.x < 0.5 || ((interData.w >> 14u) & 1u) == 0u) return false;
+    uint face = (interData.x >> 4u) & 7u;
+    vec3 inside = trackLocalPosition;
+    uint axis = face < 2u ? 1u : (face < 4u ? 2u : 0u);
+    inside[axis] += (face & 1u) == 0u ? 0.001 : -0.001;
+    ivec3 block = ivec3(floor(inside)) + baseSectionPos * 32;
+    vec3 origin = vec3((block >> 4) * 16 - baseSectionPos * 32) - cameraSubPos;
+    float distanceSq = dot(origin, origin);
+    if (distanceSq < trackReplacement.y || distanceSq > trackReplacement.z) return false;
+    uint mask = uint(replacedTracks.length()) - 1u;
+    uint slot = (uint(block.x) * 73856093u ^ uint(block.y) * 19349663u ^ uint(block.z) * 83492791u) & mask;
+    for (uint i = 0u; i <= mask; i++) {
+        ivec4 entry = replacedTracks[slot];
+        if (entry.w == 0) return false;
+        if (all(equal(entry.xyz, block))) return true;
+        slot = (slot + 1u) & mask;
+    }
+    return false;
+}
+
 void main() {
-    //vec2 uv = vec2(0);
+    if (hasDedicatedTrack()) discard;
+//vec2 uv = vec2(0);
     //Tile is the tile we are in
     vec2 tile;
     #ifdef USE_NV_BARRY
@@ -126,7 +206,13 @@ void main() {
     #endif
     #endif
 
-    vec2 uv2 = modf(uv, tile)*(1.0/(vec2(3.0,2.0)*256.0));
+    uint leafTransform = 0u;
+    uint leafHash = 0u;
+    vec2 localUV = modf(uv, tile);
+    if (useBalancedLeafCutout()) {
+        localUV = varyBalancedLeafUV(localUV, tile, leafTransform, leafHash);
+    }
+    vec2 uv2 = localUV*(1.0/(vec2(3.0,2.0)*256.0));
     vec4 colour;
     vec2 texPos = uv2 + getBaseUV();
 //This is deprecated, TODO: remove the non mip code path
@@ -135,7 +221,15 @@ void main() {
         vec2 uvSmol = uv*(1.0/(vec2(3.0,2.0)*256.0));
         vec2 dx = dFdx(uvSmol);//vec2(lDx, dDx);
         vec2 dy = dFdy(uvSmol);//vec2(lDy, dDy);
+        if ((leafTransform & 1u) != 0u) { dx = dx.yx; dy = dy.yx; }
+        if ((leafTransform & 2u) != 0u) { dx.x = -dx.x; dy.x = -dy.x; }
+        if ((leafTransform & 4u) != 0u) { dx.y = -dx.y; dy.y = -dy.y; }
         colour = textureGrad(blockModelAtlas, texPos, dx, dy);
+        colour = clearTintMaskFromColour(colour);
+        if (useCoarseFluidProxy() && colour.a == 0.0f) {
+            vec2 faceCentre = getBaseUV() + vec2(0.5f) / (vec2(3.0f, 2.0f) * 256.0f);
+            colour = clearTintMaskFromColour(textureLod(blockModelAtlas, faceCentre, 0));
+        }
     }// else {
     //    colour = textureLod(blockModelAtlas, texPos, 0);
     //}
@@ -156,8 +250,15 @@ void main() {
         return;
     }
 
-    //Check the minimum bounding texture and ensure we are greater than it
-    if (DEPTH_SCALAR_COMPARE(gl_FragCoord.z, texelFetch(depthTex, ivec2(gl_FragCoord.xy), 0).r)) {
+    // Opaque terrain follows the circular stencil owner. Translucent terrain keeps the
+    // section-depth path so water does not acquire a second circular shoreline.
+    #ifdef TRANSLUCENT
+    const bool useChunkBounds = true;
+    #else
+    const bool useChunkBounds = true;
+    #endif
+    if (useChunkBounds && DEPTH_SCALAR_COMPARE(gl_FragCoord.z,
+            texelFetch(depthTex, ivec2(gl_FragCoord.xy), 0).r)) {
         discard;
         return;
     }
@@ -165,8 +266,11 @@ void main() {
 
     //Also, small quad is really fking over the mipping level somehow
     #ifndef TRANSLUCENT
+    float cutoutAlpha = useBalancedLeafCutout() ? colour.a : textureLod(blockModelAtlas, texPos, 0).a;
+    if (useBalancedLeafCutout() && sparseBalancedLeafHole(localUV, leafHash)) cutoutAlpha = 0.0f;
+    float cutoutThreshold = useBalancedLeafCutout() ? 0.42f : 0.1f;
     colour.a = 1.0f;
-    if (useDiscard() && (textureLod(blockModelAtlas, texPos, 0).a <= 0.1f)) {
+    if (useDiscard() && cutoutAlpha <= cutoutThreshold) {
     //if (useDiscard() && (colour.a <= 0.1f)) {
     #else
     if (textureLod(blockModelAtlas, texPos, 0).a == 0.0f) {
@@ -204,10 +308,7 @@ void main() {
     uint tintingFunction = tintingState();
     bool doTint = tintingFunction==2;//Always tint if function == 2
     if (tintingFunction==1) {//Partial tint
-        vec4 tintTest = texture(blockModelAtlas, texPos, -2);
-        if (abs(tintTest.r-tintTest.g) < 0.02f && abs(tintTest.g-tintTest.b) < 0.02f) {
-            doTint = true;
-        }
+        doTint = modelIsLeaf(model) || sampleTintMask(texPos);
     }
     vec4 tint = vec4(1);
     if (doTint) {

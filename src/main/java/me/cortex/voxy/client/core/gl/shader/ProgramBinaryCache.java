@@ -6,32 +6,44 @@ import org.lwjgl.opengl.GLCapabilities;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import static org.lwjgl.opengl.GL11C.GL_RENDERER;
 import static org.lwjgl.opengl.GL11C.GL_TRUE;
+import static org.lwjgl.opengl.GL11C.GL_VENDOR;
+import static org.lwjgl.opengl.GL11C.GL_VERSION;
 import static org.lwjgl.opengl.GL11C.glGetInteger;
+import static org.lwjgl.opengl.GL11C.glGetString;
 import static org.lwjgl.opengl.GL20C.*;
 import static org.lwjgl.opengl.GL41C.*;
 
-/** Render-thread-only, bounded binary data cache. Owns no GL programs or world objects. */
+/** Render-thread-only, bounded binary data cache with disk persistence. Owns no GL programs or world objects. */
 public final class ProgramBinaryCache {
     private static final int MAX_BYTES = 16 * 1024 * 1024;
     private static final int MAX_ENTRY_BYTES = 8 * 1024 * 1024;
     private static final int MAX_ENTRIES = 64;
+    private static final int DISK_MAGIC = 0x56585342; // 'VXSB'
     private static final boolean ENABLED = Boolean.parseBoolean(
             System.getProperty("voxy.shaderBinaryCache", "true"));
+    private static final boolean DISK_ENABLED = Boolean.parseBoolean(
+            System.getProperty("voxy.shaderBinaryDiskCache", "true"));
     private record Binary(int format, byte[] bytes) {}
     private static final LinkedHashMap<String, Binary> CACHE = new LinkedHashMap<>(16, 0.75f, true);
     private static GLCapabilities context;
     private static boolean supported;
+    private static Path diskCacheDir;
     private static int retainedBytes;
-    private static long hits, misses, rejected;
+    private static long hits, misses, rejected, diskHits;
 
     private ProgramBinaryCache() {}
 
@@ -44,6 +56,7 @@ public final class ProgramBinaryCache {
             context = current;
             supported = current.glGetProgramBinary != 0 && current.glProgramBinary != 0
                     && current.glProgramParameteri != 0 && glGetInteger(GL_NUM_PROGRAM_BINARY_FORMATS) > 0;
+            diskCacheDir = supported && DISK_ENABLED ? resolveDiskCacheDir() : null;
         }
         if (!supported) return null;
         try {
@@ -68,7 +81,15 @@ public final class ProgramBinaryCache {
 
     public static int restore(String key) {
         if (key == null) return 0;
+        boolean fromDisk = false;
         Binary binary = CACHE.get(key);
+        if (binary == null && diskCacheDir != null) {
+            binary = readFromDisk(diskCacheDir, key);
+            if (binary != null) {
+                fromDisk = true;
+                putInMemory(key, binary);
+            }
+        }
         if (binary == null) {
             misses++;
             return 0;
@@ -84,6 +105,7 @@ public final class ProgramBinaryCache {
             if (glGetProgrami(program, GL_LINK_STATUS) == GL_TRUE) {
                 restored = true;
                 hits++;
+                if (fromDisk) diskHits++;
                 return program;
             }
         } catch (RuntimeException e) {
@@ -94,6 +116,7 @@ public final class ProgramBinaryCache {
         }
         CACHE.remove(key);
         retainedBytes -= binary.bytes.length;
+        if (diskCacheDir != null) deleteFromDisk(diskCacheDir, key);
         misses++;
         rejected++;
         Logger.warn("Voxy shader binary rejected; compiling source");
@@ -121,16 +144,13 @@ public final class ProgramBinaryCache {
             glGetProgramBinary(program, length, format, buffer);
             int size = length.get(0);
             if (size <= 0 || size > capacity) return;
-            while (!CACHE.isEmpty() && (CACHE.size() >= MAX_ENTRIES || retainedBytes + size > MAX_BYTES)) {
-                var iterator = CACHE.entrySet().iterator();
-                var eldest = iterator.next();
-                retainedBytes -= eldest.getValue().bytes.length;
-                iterator.remove();
-            }
             byte[] bytes = new byte[size];
             buffer.get(bytes);
-            CACHE.put(key, new Binary(format.get(0), bytes));
-            retainedBytes += size;
+            Binary binary = new Binary(format.get(0), bytes);
+            putInMemory(key, binary);
+            if (diskCacheDir != null) {
+                writeToDisk(diskCacheDir, key, binary);
+            }
         } catch (RuntimeException e) {
             // The newly linked program remains usable even if caching is unavailable.
             disableForContext("Voxy shader binary capture skipped: " + e);
@@ -139,8 +159,78 @@ public final class ProgramBinaryCache {
         }
     }
 
+    private static void putInMemory(String key, Binary binary) {
+        int size = binary.bytes.length;
+        while (!CACHE.isEmpty() && (CACHE.size() >= MAX_ENTRIES || retainedBytes + size > MAX_BYTES)) {
+            var iterator = CACHE.entrySet().iterator();
+            var eldest = iterator.next();
+            retainedBytes -= eldest.getValue().bytes.length;
+            iterator.remove();
+        }
+        Binary prev = CACHE.put(key, binary);
+        if (prev != null) retainedBytes -= prev.bytes.length;
+        retainedBytes += size;
+    }
+
+    private static Path resolveDiskCacheDir() {
+        try {
+            String base = System.getProperty("voxy.shaderBinaryCacheDir", ".voxy/shader-cache");
+            String vendor = String.valueOf(glGetString(GL_VENDOR));
+            String renderer = String.valueOf(glGetString(GL_RENDERER));
+            String version = String.valueOf(glGetString(GL_VERSION));
+            String glsl = String.valueOf(glGetString(GL_SHADING_LANGUAGE_VERSION));
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            digest.update((vendor + "\0" + renderer + "\0" + version + "\0" + glsl).getBytes(StandardCharsets.UTF_8));
+            String ctxHash = HexFormat.of().formatHex(digest.digest()).substring(0, 16);
+            Path dir = Path.of(base, ctxHash);
+            Files.createDirectories(dir);
+            return dir;
+        } catch (Exception e) {
+            Logger.warn("Voxy disk shader cache disabled: " + e);
+            return null;
+        }
+    }
+
+    private static Binary readFromDisk(Path dir, String key) {
+        Path file = dir.resolve(key + ".bin");
+        if (!Files.isRegularFile(file)) return null;
+        try {
+            byte[] raw = Files.readAllBytes(file);
+            if (raw.length <= 8 || raw.length > MAX_ENTRY_BYTES + 8) return null;
+            ByteBuffer bb = ByteBuffer.wrap(raw);
+            if (bb.getInt() != DISK_MAGIC) return null;
+            int format = bb.getInt();
+            byte[] data = new byte[raw.length - 8];
+            bb.get(data);
+            return new Binary(format, data);
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    private static void writeToDisk(Path dir, String key, Binary binary) {
+        Path file = dir.resolve(key + ".bin");
+        Path tmp = dir.resolve(key + ".bin.tmp");
+        try {
+            ByteBuffer bb = ByteBuffer.allocate(8 + binary.bytes.length);
+            bb.putInt(DISK_MAGIC);
+            bb.putInt(binary.format);
+            bb.put(binary.bytes);
+            Files.write(tmp, bb.array());
+            Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}
+        }
+    }
+
+    private static void deleteFromDisk(Path dir, String key) {
+        try {
+            Files.deleteIfExists(dir.resolve(key + ".bin"));
+        } catch (IOException ignored) {}
+    }
+
     public static String statistics() {
-        return "hits=" + hits + ", misses=" + misses + ", rejected=" + rejected
+        return "hits=" + hits + " (disk=" + diskHits + "), misses=" + misses + ", rejected=" + rejected
                 + ", entries=" + CACHE.size() + ", bytes=" + retainedBytes;
     }
 
@@ -148,14 +238,16 @@ public final class ProgramBinaryCache {
         CACHE.clear();
         retainedBytes = 0;
         supported = false;
+        diskCacheDir = null;
         Logger.warn(message);
     }
 
     public static void clear() {
         CACHE.clear();
         retainedBytes = 0;
-        hits = misses = rejected = 0;
+        hits = misses = rejected = diskHits = 0;
         context = null;
         supported = false;
+        diskCacheDir = null;
     }
 }

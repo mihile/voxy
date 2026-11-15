@@ -87,6 +87,12 @@ public class AllocationArena {
         }
     }
 
+    public boolean canAlloc(int size) {
+        if (size <= 0) throw new IllegalArgumentException();
+        var iter = this.FREE.iterator(((long) size << ADDR_BITS)-1);
+        return iter.hasNext() || this.totalSize + size <= this.sizeLimit;
+    }
+
     public int free(long addr) {//Returns size of freed memory
         addr &= ADDR_MSK;//encase addr stores shit in its upper bits
         var iter = this.TAKEN.iterator(addr<<SIZE_BITS);//Dont need to include -1 as size != 0

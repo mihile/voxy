@@ -135,13 +135,17 @@ public class NodeCleaner {
     }
 
     private boolean shouldCleanGeometry() {
+        if (this.nodeManager.isGeometryAllocationStalled()) {
+            return true;
+        }
         if (false) {
             //If used more than 75% of geometry buffer
             long used = this.nodeManager.getUsedGeometryCapacity();
             return 3 < ((double) used) / ((double) (this.nodeManager.getGeometryCapacity() - used));
         } else {
             long remaining = this.nodeManager.getGeometryCapacity() - this.nodeManager.getUsedGeometryCapacity();
-            return remaining < 256_000_000;//If less than 256 mb free memory
+            long reserve = Math.max(256_000_000L, this.nodeManager.getGeometryCapacity() >>> 3);
+            return remaining < reserve;
         }
     }
 

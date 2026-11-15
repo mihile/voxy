@@ -1,12 +1,8 @@
 package me.cortex.voxy.client.core.rendering.building;
 
-import me.cortex.voxy.common.util.BitUtil;
-
 import org.lwjgl.system.MemoryUtil;
 
 import java.util.Arrays;
-import java.util.BitSet;
-import java.util.Random;
 
 //Block occupancy, 2 lvl compacted bitset for occluding block existance
 // TODO: need to add neighboring chunk data aswell? or somehow do a linking thing where this is stored in a secondary storage
@@ -15,8 +11,8 @@ public class OccupancySet {
     private long topLvl;//4x4x4
     private final long[] bottomLvl = new long[(4*4*4)*8];
     public void set(final int pos) {
-        final long topBit = 1L<<BitUtil.compress(pos, 0b11000_11000_11000);
-        final int  botIdx =     BitUtil.compress(pos, 0b00111_00111_00111);
+        final long topBit = 1L<<me.cortex.voxy.common.util.BitMath.compress(pos, 0b11000_11000_11000);
+        final int  botIdx =     me.cortex.voxy.common.util.BitMath.compress(pos, 0b00111_00111_00111);
 
         int baseBotIdx = Long.bitCount(this.topLvl&(topBit-1))*8;
         if ((this.topLvl & topBit) == 0) {
@@ -40,8 +36,8 @@ public class OccupancySet {
     }
 
     private boolean get(int pos) {
-        final long topBit = 1L<<BitUtil.compress(pos, 0b11000_11000_11000);
-        final int  botIdx =     BitUtil.compress(pos, 0b00111_00111_00111);
+        final long topBit = 1L<<me.cortex.voxy.common.util.BitMath.compress(pos, 0b11000_11000_11000);
+        final int  botIdx =     me.cortex.voxy.common.util.BitMath.compress(pos, 0b00111_00111_00111);
         if ((this.topLvl & topBit) == 0) {
             return false;
         }
@@ -88,20 +84,5 @@ public class OccupancySet {
         }
     }
 
-    public static void main(String[] args) {
-        for (int q = 0; q < 1000; q++) {
-            var o = new OccupancySet();
-            var r = new Random(12523532643L*q);
-            var bs = new BitSet(32 * 32 * 32);
-            for (int i = 0; i < 5000; i++) {
-                int p = r.nextInt(32 * 32 * 32);
-                o.set(p);
-                bs.set(p);
 
-                for (int j = 0; j < 32 * 32 * 32; j++) {
-                    if (o.get(j) != bs.get(j)) throw new IllegalStateException();
-                }
-            }
-        }
-    }
 }

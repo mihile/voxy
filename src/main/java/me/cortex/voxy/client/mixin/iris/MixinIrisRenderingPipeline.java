@@ -7,6 +7,7 @@ import me.cortex.voxy.client.iris.IGetVoxyPatchData;
 import me.cortex.voxy.client.iris.IrisShaderPatch;
 import me.cortex.voxy.client.iris.IrisVoxyRenderPipelineData;
 import net.irisshaders.iris.gl.buffer.ShaderStorageBufferHolder;
+import net.irisshaders.iris.gl.sampler.GlSampler;
 import net.irisshaders.iris.pipeline.IrisRenderingPipeline;
 import net.irisshaders.iris.shaderpack.programs.ProgramSet;
 import net.irisshaders.iris.uniforms.custom.CustomUniforms;
@@ -17,6 +18,7 @@ import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(value = IrisRenderingPipeline.class, remap = false)
@@ -26,46 +28,46 @@ public class MixinIrisRenderingPipeline implements IGetVoxyPatchData, IGetIrisVo
     @Unique IrisShaderPatch patchData;
     @Unique
     IrisVoxyRenderPipelineData pipeline;
+    @Unique private GlSampler voxy$depthSampler;
 
-    @Inject(method = "<init>", at = @At(value = "INVOKE", target = "Lnet/irisshaders/iris/pipeline/transform/ShaderPrinter;resetPrintState()V", shift = At.Shift.AFTER))
-    private void voxy$injectPatchDataStore(ProgramSet programSet, CallbackInfo ci) {
+    @Redirect(method = "<init>", at = @At(value = "INVOKE", target = "Lnet/irisshaders/iris/uniforms/custom/CustomUniforms;optimise()V"))
+    private void voxy$optimiseCustomUniforms(CustomUniforms customUniforms, ProgramSet programSet) {
+        IrisShaderPatch.beginUniformRetention(((IGetVoxyPatchData) programSet).voxy$getPatchData());
+        try {
+            customUniforms.optimise();
+        } finally {
+            IrisShaderPatch.endUniformRetention();
+        }
+    }
+
+    @Inject(method = "<init>", at = @At("RETURN"))
+    private void voxy$initializePipeline(ProgramSet programSet, CallbackInfo ci) {
         if (IrisUtil.SHADER_SUPPORT) {
             this.patchData = ((IGetVoxyPatchData) programSet).voxy$getPatchData();
         }
-    }
-
-    @Inject(method = "<init>", at = @At(value = "INVOKE", target = "Lnet/irisshaders/iris/pipeline/IrisRenderingPipeline;createSetupComputes([Lnet/irisshaders/iris/shaderpack/programs/ComputeSource;Lnet/irisshaders/iris/shaderpack/programs/ProgramSet;Lnet/irisshaders/iris/shaderpack/texture/TextureStage;)[Lnet/irisshaders/iris/gl/program/ComputeProgram;"))
-    private void voxy$injectPipeline(ProgramSet programSet, CallbackInfo ci) {
         if (this.patchData != null) {
             this.pipeline = IrisVoxyRenderPipelineData.buildPipeline((IrisRenderingPipeline)(Object)this, this.patchData, this.customUniforms, this.shaderStorageBufferHolder);
         }
-    }
-
-    @Inject(method = "destroy", at = @At("HEAD"))
-    private void voxy$destroyPipeline(CallbackInfo ci) {
-        if (this.pipeline == null) {
-            return;
-        }
-        if (Minecraft.getInstance().levelRenderer instanceof IGetVoxyRenderSystem rendererGetter) {
-            var renderer = rendererGetter.voxy$getRenderSystem();
-            if (renderer != null && renderer.isUsingPipelineData(this.pipeline)) {
-                rendererGetter.voxy$shutdownRenderer();
-            }
-        }
-        this.pipeline = null;
     }
 
     @Inject(method = "beginLevelRendering", at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/systems/RenderSystem;activeTexture(I)V", shift = At.Shift.BEFORE), remap = false)
     private void voxy$injectViewportSetup(CallbackInfo ci) {
         if (IrisUtil.CAPTURED_VIEWPORT_PARAMETERS != null) {
             var rendererGetter = (IGetVoxyRenderSystem) Minecraft.getInstance().levelRenderer;
-            // Also allow packs without Voxy patch data to use the normal LOD
-            // pipeline, as the old allChanged-based creation path did.
             rendererGetter.voxy$ensureRenderer();
             var renderer = rendererGetter.voxy$getRenderSystem();
             if (renderer != null) {
                 IrisUtil.CAPTURED_VIEWPORT_PARAMETERS.apply(renderer);
             }
+        }
+    }
+
+    @Inject(method = "destroy", at = @At("HEAD"), remap = false)
+    private void voxy$releaseRendererBeforeTargets(CallbackInfo ci) {
+        IrisUtil.CAPTURED_VIEWPORT_PARAMETERS = null;
+        var levelRenderer = Minecraft.getInstance().levelRenderer;
+        if (levelRenderer != null) {
+            ((IGetVoxyRenderSystem) levelRenderer).voxy$shutdownRenderer();
         }
     }
 
@@ -77,5 +79,21 @@ public class MixinIrisRenderingPipeline implements IGetVoxyPatchData, IGetIrisVo
     @Override
     public IrisVoxyRenderPipelineData voxy$getPipelineData() {
         return this.pipeline;
+    }
+
+    @Override
+    public GlSampler voxy$getDepthSampler() {
+        if (this.voxy$depthSampler == null) {
+            this.voxy$depthSampler = new GlSampler(false, true, false, false);
+        }
+        return this.voxy$depthSampler;
+    }
+
+    @Inject(method = "destroy", at = @At("TAIL"), remap = false)
+    private void voxy$releaseDepthSampler(CallbackInfo ci) {
+        if (this.voxy$depthSampler != null) {
+            this.voxy$depthSampler.destroy();
+            this.voxy$depthSampler = null;
+        }
     }
 }

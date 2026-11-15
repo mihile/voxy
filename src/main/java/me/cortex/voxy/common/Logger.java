@@ -14,6 +14,11 @@ public class Logger {
     public static boolean SHUTUP = false;
     public static boolean SHUTUP_INFO = false;
     private static final org.slf4j.Logger LOGGER = LoggerFactory.getLogger("Voxy");
+    private static volatile boolean clientHudReady;
+
+    public static void markClientHudReady() {
+        clientHudReady = true;
+    }
 
 
     private static String callClsName() {
@@ -58,6 +63,9 @@ public class Logger {
     }
 
     public static void showInHUD(String msg) {
+        if (!clientHudReady) {
+            return;
+        }
         var instance = Minecraft.getInstance();
         if (instance != null) {
             instance.executeIfPossible(() -> {

@@ -1,5 +1,7 @@
 package me.cortex.voxy.client.core;
 
+import me.cortex.voxy.common.util.ExceptionCleanup;
+
 import me.cortex.voxy.client.RenderStatistics;
 import me.cortex.voxy.client.TimingStatistics;
 import me.cortex.voxy.client.VoxyClient;
@@ -45,6 +47,7 @@ import static org.lwjgl.opengl.GL45.glGetNamedFramebufferAttachmentParameteri;
 import static org.lwjgl.opengl.GL45C.glBindTextureUnit;
 
 public abstract class AbstractRenderPipeline extends TrackedObject {
+    public final RenderProperties properties;
     private final BooleanSupplier frexStillHasWork;
 
     private final AsyncNodeManager nodeManager;
@@ -55,9 +58,7 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
 
     private final FullscreenBlit depthStencilSetup;
 
-    public final RenderProperties properties;
-
-    public final DepthFramebuffer fb = new DepthFramebuffer(GL_DEPTH24_STENCIL8);
+    public final DepthFramebuffer fb;
 
     protected final boolean deferTranslucency;
 
@@ -67,18 +68,21 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         glSamplerParameteri(DEPTH_SAMPLER, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     }
 
-    protected AbstractRenderPipeline(AsyncNodeManager nodeManager, NodeCleaner nodeCleaner, HierarchicalOcclusionTraverser traversal, BooleanSupplier frexSupplier, boolean deferTranslucency) {
-        this(RenderProperties.LEGACY, nodeManager, nodeCleaner, traversal, frexSupplier, deferTranslucency);
-    }
-
     protected AbstractRenderPipeline(RenderProperties properties, AsyncNodeManager nodeManager, NodeCleaner nodeCleaner, HierarchicalOcclusionTraverser traversal, BooleanSupplier frexSupplier, boolean deferTranslucency) {
         this.properties = properties;
-        this.depthStencilSetup = new FullscreenBlit(properties, "voxy:post/fullscreen2.vert", "voxy:post/setup_stencil_depth.frag");
         this.frexStillHasWork = frexSupplier;
         this.nodeManager = nodeManager;
         this.nodeCleaner = nodeCleaner;
         this.traversal = traversal;
         this.deferTranslucency = deferTranslucency;
+
+        try {
+            this.fb = new DepthFramebuffer(GL_DEPTH24_STENCIL8);
+            this.depthStencilSetup = new FullscreenBlit(properties, "voxy:post/fullscreen2.vert", "voxy:post/setup_stencil_depth.frag");
+        } catch (RuntimeException | Error failure) {
+            this.releaseBaseResources(new ExceptionCleanup(failure));
+            throw failure;
+        }
     }
 
     //Allows pipelines to configure model baking system
@@ -125,6 +129,9 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
 
         rs.postOpaquePreperation(viewport);
 
+        me.cortex.voxy.client.compat.LodPipelineHooks.beforeTranslucent(
+                this, viewport, this.properties.closerEqualDepthCompare());
+
         this.postOpaquePreTranslucent(viewport, sourceFrameBuffer);
         GPUTiming.INSTANCE.marker("RT");
 
@@ -137,8 +144,9 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         glBindFramebuffer(GL_FRAMEBUFFER, sourceFrameBuffer);
     }
 
-    protected void initDepthStencil(Viewport<?> viewport, int sourceFrameBuffer, int targetFb, int srcWidth, int srcHeight, int width, int height) {
-        glClearNamedFramebufferfi(targetFb, GL_DEPTH_STENCIL, 0, 1.0f, 1);
+    protected void initDepthStencil(Viewport<?> viewport, int sourceFrameBuffer, int targetFb,
+                                    int srcWidth, int srcHeight, int width, int height) {
+        glClearNamedFramebufferfi(targetFb, GL_DEPTH_STENCIL, 0, this.properties.clearDepth(), 1);
         // using blit to copy depth from mismatched depth formats is not portable so instead a full screen pass is performed for a depth copy
         // the mismatched formats in this case is the d32 to d24s8
         glBindFramebuffer(GL30.GL_FRAMEBUFFER, targetFb);
@@ -161,9 +169,7 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         glDepthMask(true);
         glColorMask(false,false,false,false);
         this.depthStencilSetup.blit();
-
-
-        glDepthFunc(GL_LEQUAL);
+        glDepthFunc(this.properties.closerEqualDepthCompare());
         glColorMask(true,true,true,true);
 
         //Make voxy terrain render only where there isnt mc terrain
@@ -172,6 +178,7 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
     }
 
     private static final long SCRATCH = MemoryUtil.nmemAlloc(4*4*4);
+    private static final Matrix4f INVERSE_MVP = new Matrix4f();
     protected static void transformBlitDepth(FullscreenBlit blitShader, int srcDepthTex, int dstFB, Viewport<?> viewport, Matrix4f targetTransform) {
         // at this point the dst frame buffer doesn't have a stencil attachment so we don't need to keep the stencil test on for the blit
         // in the worst case the dstFB does have a stencil attachment causing this pass to become 'corrupted'
@@ -180,7 +187,7 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
 
         blitShader.bind();
         glBindTextureUnit(0, srcDepthTex);
-        new Matrix4f(viewport.MVP).invert().getToAddress(SCRATCH);
+        viewport.MVP.invert(INVERSE_MVP).getToAddress(SCRATCH);
         nglUniformMatrix4fv(1, 1, false, SCRATCH);//inverse fromProjection
         targetTransform.getToAddress(SCRATCH);//new Matrix4f(tooProjection).mul(vp.modelView).get(data);
         nglUniformMatrix4fv(2, 1, false, SCRATCH);//tooProjection
@@ -223,20 +230,22 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
 
     @Override
     protected void free0() {
-        this.fb.free();
-        this.sectionRenderer.free();
-        this.depthStencilSetup.delete();
-        super.free0();
+        var cleanup = new ExceptionCleanup(null);
+        this.releaseBaseResources(cleanup);
+        cleanup.rethrow();
+    }
+
+    private void releaseBaseResources(ExceptionCleanup cleanup) {
+        if (this.sectionRenderer != null) cleanup.run(this.sectionRenderer::free);
+        if (this.depthStencilSetup != null) cleanup.run(this.depthStencilSetup::delete);
+        if (this.fb != null) cleanup.run(this.fb::free);
+        cleanup.run(super::free0);
     }
 
     public void addDebug(List<String> debug) {
         this.sectionRenderer.addDebug(debug);
         this.traversal.addDebug(debug);
         RenderStatistics.addDebug(debug);
-    }
-
-    public boolean isUsingPipelineData(Object pipelineData) {
-        return false;
     }
 
     //Binds the framebuffer and any other bindings needed for rendering

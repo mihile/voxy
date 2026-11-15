@@ -1,0 +1,145 @@
+package me.cortex.voxy.common.util.cpu;
+
+
+//Represents the layout of the current cpu running on
+public class CpuLayout {
+    private CpuLayout(){}
+
+    public static void setThreadAffinity(Core... cores) {
+//? if 1.21.1 {
+        /*var affinity = new Affinity[cores.length];
+        for (int i = 0; i < cores.length; i++) {
+            affinity[i] = cores[i].affinity;
+        }
+        setThreadAffinity(affinity);
+*///? }
+    }
+
+    public static void setThreadAffinity(Affinity... affinities) {
+//? if 1.21.1 {
+        /*var platform = Platform.get();
+        if (platform == Platform.WINDOWS) {
+            long[] msks = new long[affinities.length];
+            short[] groups = new short[affinities.length];Arrays.fill(groups, (short) -1);
+            int i = 0;
+            for (var a : affinities) {
+                int idx;
+                for (idx = 0; idx<i && groups[idx]!=a.group; idx++);
+                if (idx == i) {groups[idx] = a.group; i++;}
+                msks[idx] |= a.msk;
+            }
+            ThreadUtils.SetThreadSelectedCpuSetMasksWin32(Arrays.copyOf(msks, i), Arrays.copyOf(groups, i));
+        } else if (platform == Platform.LINUX) {
+            Arrays.sort(affinities, (a, b) -> a.group - b.group);
+            long[] msks = new long[affinities.length];
+            for (int i=0; i<affinities.length; i++) {
+                msks[i] = affinities[i].msk;
+            }
+            ThreadUtils.schedSetaffinityLinux(msks);
+        } else {
+            Logger.error("Don't know how to set thread affinity on this platform.");
+        }
+*///? }
+    }
+
+    private static Core[] generateCoreLayoutWindows() {
+//? if 1.20.1 {
+        return null;
+//? } else {
+        /*var cores = Kernel32Util.getLogicalProcessorInformationEx(WinNT.LOGICAL_PROCESSOR_RELATIONSHIP.RelationProcessorCore);
+        boolean allSameClass = true;
+        for (var coreO : cores) {
+            var core = (WinNT.PROCESSOR_RELATIONSHIP) coreO;
+            allSameClass &= core.efficiencyClass == 0;
+        }
+
+        int i = 0;
+        var res = new Core[cores.length];
+        for (var coreO : cores) {
+            var core = (WinNT.PROCESSOR_RELATIONSHIP) coreO;
+            boolean smt = (core.flags&1)==1;
+            byte eclz = core.efficiencyClass;
+            if (core.groupMask.length!=1) {
+                throw new IllegalStateException("Unsupported architecture");
+            }
+            var msk = core.groupMask[0].mask.longValue();
+            if (Long.bitCount(msk)>1 != smt) {
+                throw new IllegalStateException("Logic issue");
+            }
+            res[i++] = new Core((!allSameClass)&&eclz==0, new Affinity(msk, core.groupMask[0].group));
+        }
+        sort(res);
+        return res;
+*///? }
+    }
+
+    private static Core[] generateCoreLayoutLinux() {
+//? if 1.20.1 {
+        return null;
+//? } else {
+        /*var processor = new SystemInfo().getHardware().getProcessor();
+        Int2ObjectOpenHashMap<Affinity> affinityMsk = new Int2ObjectOpenHashMap<>();
+        for (var thread : processor.getLogicalProcessors()) {
+            var aff = affinityMsk.getOrDefault(thread.getPhysicalProcessorNumber(), new Affinity(0, (short) thread.getProcessorGroup()));
+            if (thread.getProcessorGroup() != aff.group) {
+                throw new IllegalStateException();
+            }
+            affinityMsk.put(thread.getPhysicalProcessorNumber(), new Affinity(aff.msk|(1L<<thread.getProcessorNumber()), (short) thread.getProcessorGroup()));
+        }
+
+        var cores = new Core[processor.getPhysicalProcessors().size()];
+        int i = 0;
+        boolean allSameEfficiency = true;
+        for (var core : processor.getPhysicalProcessors()) {
+            if (core.getEfficiency() != 0) {
+                allSameEfficiency = false;
+                break;
+            }
+        }
+        for (var core : processor.getPhysicalProcessors()) {
+            var aff = affinityMsk.remove(core.getPhysicalProcessorNumber());
+            if (aff == null) {
+                throw new IllegalStateException();
+            }
+            cores[i++] = new Core(core.getEfficiency()==0&&!allSameEfficiency, aff);
+        }
+        sort(cores);
+        return cores;
+*///? }
+    }
+
+
+    private static void sort(Core[] cores) {
+//? if 1.21.1 {
+        /*Arrays.sort(cores, (a,b)->{
+            if (a.isEfficiency == b.isEfficiency) {
+                int c = Short.compareUnsigned(a.affinity.group, b.affinity.group);
+                if (c==0) {
+                    return Long.compareUnsigned(a.affinity.msk, b.affinity.msk);
+                }
+                return c;
+            } else {
+                return a.isEfficiency?1:-1;
+            }
+        });
+*///? }
+    }
+
+    public record Affinity(long msk, short group) {}
+    public record Core(boolean isEfficiency, Affinity affinity) {
+
+    }
+
+
+    public static int getCoreCount() {
+//? if 1.20.1 {
+        return Runtime.getRuntime().availableProcessors();
+//? } else {
+        /*if (CORES==null) {
+            return Runtime.getRuntime().availableProcessors();
+        } else {
+            return CORES.length;
+        }
+*///? }
+    }
+}

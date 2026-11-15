@@ -1,6 +1,5 @@
 package me.cortex.voxy.commonImpl.importers;
 
-import me.cortex.voxy.client.core.util.ExpansionUtil;
 import me.cortex.voxy.common.Logger;
 import me.cortex.voxy.common.thread.Service;
 import me.cortex.voxy.common.thread.ServiceManager;
@@ -231,8 +230,15 @@ public class DHImporter implements IDataImporter {
                 throw new IllegalStateException();
             {
                 var biomeRes = ResourceLocation.tryParse(encEntry.substring(0, idx));
-                var biome = this.biomeRegistry.getOptional(biomeRes).orElse(this.defaultBiome.value());
+                var biome = this.biomeRegistry.
+                //? if 1.20.1 {
+                getOptional(biomeRes).orElse(this.defaultBiome.value());
                 biomeId = this.engine.getMapper().getIdForBiome(this.biomeRegistry.wrapAsHolder(biome));
+                //?} else {
+                /*getHolder(biomeRes).orElse(this.defaultBiome);
+                biomeId = this.engine.getMapper().getIdForBiome(biome);
+                *///?}
+
             }
             {
                 int b = idx + BLOCK_STATE_SEPARATOR_STRING.length();
@@ -343,8 +349,8 @@ public class DHImporter implements IDataImporter {
         byte[] col = ctx.colScratch;
         for (int x = 0; x < 64; x++) {
             for (int z = 0; z < 64; z++) {
-                int bPos = ExpansionUtil.expand(x&0xF, 0b00_00_0000_0000_1111) |
-                           ExpansionUtil.expand(z, 0b00_11_0000_1111_0000);
+                int bPos = me.cortex.voxy.common.util.BitMath.expand(x&0xF, 0b00_00_0000_0000_1111) |
+                           me.cortex.voxy.common.util.BitMath.expand(z, 0b00_11_0000_1111_0000);
                 short cl = stream.readShort();
                 if (cl < 0) {
                     throw new IllegalStateException();
@@ -360,8 +366,8 @@ public class DHImporter implements IDataImporter {
                     //    int a = 0;
                     //}
                     //Insert all entries into data cache
-                    startY = ExpansionUtil.expand(startY, 0b11111111_00_1111_0000_0000);
-                    endY = ExpansionUtil.expand(endY, 0b11111111_00_1111_0000_0000);
+                    startY = me.cortex.voxy.common.util.BitMath.expand(startY, 0b11111111_00_1111_0000_0000);
+                    endY = me.cortex.voxy.common.util.BitMath.expand(endY, 0b11111111_00_1111_0000_0000);
                     final int Msk = 0b11111111_00_1111_0000_0000;
                     final int iMsk1 = (~Msk)+1;
                     for (int y = startY; y != endY; y = (y+iMsk1)&Msk) {
