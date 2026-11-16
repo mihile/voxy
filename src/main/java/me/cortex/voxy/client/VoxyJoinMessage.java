@@ -32,8 +32,8 @@ public final class VoxyJoinMessage {
         var player = Minecraft.getInstance().player;
         if (player != null) {
             if (VoxyConfig.CONFIG.showJoinMessage) {
-                player.displayClientMessage(Component.literal("[Neo Voxy] " + version()).withStyle(ChatFormatting.AQUA), false);
-                player.displayClientMessage(Component.literal("Maintainer: JohnSnow | https://github.com/NHblock-Johnsnow/neo-voxy").withStyle(ChatFormatting.GRAY), false);
+                player.displayClientMessage(Component.literal("[Voxy Forge] " + version()).withStyle(ChatFormatting.AQUA), false);
+                player.displayClientMessage(Component.literal("1.20.1 Forge port by mihile | https://github.com/mihile/voxy/tree/1.20.1_forge").withStyle(ChatFormatting.GRAY), false);
                 player.displayClientMessage(Component.translatable("voxy.join.disableHint").withStyle(ChatFormatting.DARK_GRAY), false);
             }
             if (!VoxyConfig.CONFIG.upgradeCleanupNoticeShown) {

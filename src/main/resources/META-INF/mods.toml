@@ -1,14 +1,16 @@
 modLoader="javafml"
 loaderVersion="[47,)"
 license="All-Rights-Reserved"
-issueTrackerURL="https://github.com/NHblock-Johnsnow/neo-voxy/issues"
+issueTrackerURL="https://github.com/mihile/voxy/issues"
 
 [[mods]]
 modId="voxy"
 version="${version}"
-displayName="Voxy (Forge Hybrid)"
-description="Minecraft 1.20.1 Forge hybrid combining Voxy 1.20.1 async GPU optimizations with Neo-Voxy stability, LOD quality, and Embeddium/Oculus/Create compatibility."
-authors="Cortex, JohnSnow"
+displayName="Voxy (1.20.1 Forge Port)"
+displayURL="https://github.com/mihile/voxy/tree/1.20.1_forge"
+description='''Unofficial Minecraft 1.20.1 Forge port maintained by mihile. Combines Voxy 1.20.1 async GPU optimizations with Neo-Voxy stability, LOD quality, and Embeddium/Oculus/Create compatibility.
+GitHub: https://github.com/mihile/voxy/tree/1.20.1_forge'''
+authors="mihile (1.20.1 Forge port), based on Voxy by Cortex & Neo-Voxy"
 logoFile="assets/voxy/icon.png"
 
 [[dependencies.voxy]]
